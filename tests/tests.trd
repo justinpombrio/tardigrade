@@ -1,0 +1,27 @@
+TEST formatting
+    1 * 2
+      +
+    33* 44
+EXPECT format
+    1 * 2 + 33 * 44
+END
+
+TEST addition
+    2 + 3
+EXPECT
+    5
+END
+
+TEST multiplication
+    2 * 3
+EXPECT
+    6
+END
+
+TEST precedence
+    1 * 2
+      +
+    33* 44
+EXPECT
+    1454
+END
