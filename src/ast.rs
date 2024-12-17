@@ -8,18 +8,13 @@ use std::fmt;
 pub type Span = panfix::Span;
 
 #[derive(Debug, Clone)]
-pub struct WithSpan<T> {
-    pub span: Span,
-    pub inner: T,
-}
-
-#[derive(Debug, Clone)]
 pub enum Expr {
     Int(i32),
     #[allow(non_camel_case_types)]
-    Binop_II_I(Binop_II_I, Box<WithSpan<Expr>>, Box<WithSpan<Expr>>),
+    Binop_II_I(Binop_II_I, Box<(Expr, Span)>, Box<(Expr, Span)>),
 }
 
+/// Binary operator from (int, int) to int.
 #[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types)]
 pub enum Binop_II_I {
@@ -37,6 +32,7 @@ impl Prec {
     pub const MAX: Prec = Prec(u16::MAX);
 }
 
+/* Will be needed later
 impl Expr {
     pub fn prec(&self) -> Prec {
         use Expr::*;
@@ -47,6 +43,7 @@ impl Expr {
         }
     }
 }
+*/
 
 impl Binop_II_I {
     pub fn prec(&self) -> Prec {
@@ -64,12 +61,16 @@ impl Binop_II_I {
  * Values *
  **********/
 
+/// A runtime value. The Value knows its type, but it will not tell you because:
+///
+/// - A full implementation would compile to assembly and not know the underlying type, except as
+///   revealed by the type checker.
+/// - The value does store its own type to notice at runtime if the typechecker messed up.
 #[derive(Debug, Clone)]
 pub struct Value(ValueCase);
 
 #[derive(Debug, Clone)]
 enum ValueCase {
-    Span(Span),
     Int(i32),
 }
 
@@ -78,15 +79,8 @@ impl Value {
         Value(ValueCase::Int(int))
     }
 
-    fn into_span(self) -> Span {
-        if let ValueCase::Span(span) = self.0 {
-            span
-        } else {
-            self.type_error(Type::Span)
-        }
-    }
-
-    pub fn into_int(self) -> i32 {
+    pub fn unwrap_int(self) -> i32 {
+        #[allow(irrefutable_let_patterns)] // Will be refutable in the future
         if let ValueCase::Int(int) = self.0 {
             int
         } else {
@@ -96,7 +90,7 @@ impl Value {
 
     fn type_error(self, expected: Type) -> ! {
         panic!(
-            "Wrong type: expected {} but found {}",
+            "Type checking bug. Wrong type: expected {} but found {}",
             expected,
             self.0.type_of()
         )
@@ -109,7 +103,6 @@ impl ValueCase {
 
         match self {
             Int(_) => Type::Int,
-            Span(_) => Type::Span,
         }
     }
 }
@@ -120,7 +113,6 @@ impl fmt::Display for Value {
 
         match self.0 {
             Int(n) => write!(f, "{}", n),
-            Span(span) => write!(f, "{}", span),
         }
     }
 }

@@ -5,7 +5,9 @@ use tardigrade::Tardigrade;
 
 const TEST_DIR: &str = "tests/";
 const TEST_EXT: &str = "trd";
+const INDENT: &str = "    ";
 
+/// A single test case (TEST/EXPECT/END in the test files).
 struct TestCase {
     name: String,
     source: String,
@@ -13,103 +15,19 @@ struct TestCase {
     expected_output: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ParseState {
-    Initial,
-    ReadingSource,
-    ReadingOutput,
-}
-
+/// What to do with the test case's source code.
 #[derive(Debug, Clone, Copy)]
 enum Operation {
     Format,
     Run,
 }
 
-fn test_files() -> io::Result<Vec<String>> {
-    let mut tests = Vec::new();
-    for entry in fs::read_dir(TEST_DIR)? {
-        let entry = entry?;
-        if entry
-            .path()
-            .extension()
-            .map(|ext| ext.to_str() == Some(TEST_EXT))
-            .unwrap_or(false)
-        {
-            tests.push(fs::read_to_string(entry.path())?);
-        }
-    }
-    Ok(tests)
-}
-
 #[test]
 fn run_tests() {
-    use ParseState::*;
-
-    let mut parse_state = ParseState::Initial;
-    let mut test_name = String::new();
-    let mut source = String::new();
-    let mut operation = Operation::Format;
-    let mut output = String::new();
+    let test_files = read_test_files().unwrap();
     let mut test_cases = Vec::new();
-    for input in test_files().unwrap() {
-        for line in input.lines() {
-            if line.is_empty() || line.starts_with("//") {
-                continue;
-            }
-            match parse_state {
-                Initial => {
-                    if let Some(stripped) = line.strip_prefix("TEST") {
-                        test_name = stripped.trim().to_owned();
-                        parse_state = ReadingSource;
-                    } else {
-                        panic!("Test cases: expected 'TEST', found '{}'", line);
-                    }
-                }
-                ReadingSource => {
-                    if line.starts_with("EXPECT") {
-                        operation = match line {
-                            "EXPECT format" => Operation::Format,
-                            "EXPECT" => Operation::Run,
-                            _ => panic!(
-                                "Test cases: expected 'EXPECT' or 'EXPECT format', found '{}'",
-                                line
-                            ),
-                        };
-                        parse_state = ReadingOutput;
-                    } else if line.starts_with("TEST") || line.starts_with("END") {
-                        panic!("Test cases: expected 'EXPECT', found '{}'", line);
-                    } else {
-                        if !source.is_empty() {
-                            source += "\n";
-                        }
-                        source += line;
-                    }
-                }
-                ReadingOutput => {
-                    if line.starts_with("END") {
-                        test_cases.push(TestCase {
-                            name: mem::take(&mut test_name),
-                            source: mem::take(&mut source),
-                            operation,
-                            expected_output: mem::take(&mut output),
-                        });
-                        parse_state = Initial;
-                    } else if line.starts_with("TEST") || line.starts_with("EXPECT") {
-                        panic!("Test cases: expected 'END', found '{}'", line);
-                    } else {
-                        if !output.is_empty() {
-                            output += "\n";
-                        }
-                        output += line;
-                    }
-                }
-            }
-        }
-    }
-
-    if parse_state != Initial {
-        panic!("Test cases: missing final 'END'");
+    for test_file in test_files {
+        test_cases.append(&mut parse_test_cases(test_file));
     }
 
     for test in test_cases {
@@ -129,26 +47,127 @@ fn run_tests() {
             println!("ACTUAL");
             println!("{}", actual_output);
             println!("END");
-            assert_eq!(test.expected_output, actual_output);
+            panic!("Test case failed.");
         }
     }
 }
 
+/// Read all test case files (files in `TEST_DIR` that end in `TEST_EXT`).
+fn read_test_files() -> io::Result<Vec<String>> {
+    let mut tests = Vec::new();
+    for entry in fs::read_dir(TEST_DIR)? {
+        let entry = entry?;
+        if entry
+            .path()
+            .extension()
+            .map(|ext| ext.to_str() == Some(TEST_EXT))
+            .unwrap_or(false)
+        {
+            tests.push(fs::read_to_string(entry.path())?);
+        }
+    }
+    Ok(tests)
+}
+
+/// Parse the test cases from a single file. Panic on errors.
+fn parse_test_cases(input: String) -> Vec<TestCase> {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ParseState {
+        Initial,
+        ReadingSource,
+        ReadingOutput,
+    }
+
+    use ParseState::*;
+
+    let mut parse_state = ParseState::Initial;
+    let mut test_name = String::new();
+    let mut source = String::new();
+    let mut operation = Operation::Format;
+    let mut output = String::new();
+    let mut test_cases = Vec::new();
+    for line in input.lines() {
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        match parse_state {
+            Initial => {
+                if let Some(stripped) = line.strip_prefix("TEST") {
+                    test_name = stripped.trim().to_owned();
+                    parse_state = ReadingSource;
+                } else {
+                    panic!("Test cases: expected 'TEST', found '{}'", line);
+                }
+            }
+            ReadingSource => {
+                if line.starts_with("EXPECT") {
+                    operation = match line {
+                        "EXPECT format" => Operation::Format,
+                        "EXPECT" => Operation::Run,
+                        _ => panic!(
+                            "Test cases: expected 'EXPECT' or 'EXPECT format', found '{}'",
+                            line
+                        ),
+                    };
+                    parse_state = ReadingOutput;
+                } else if line.starts_with("TEST") || line.starts_with("END") {
+                    panic!("Test cases: expected 'EXPECT', found '{}'", line);
+                } else {
+                    if !source.is_empty() {
+                        source += "\n";
+                    }
+                    source += line;
+                }
+            }
+            ReadingOutput => {
+                if line.starts_with("END") {
+                    test_cases.push(TestCase {
+                        name: mem::take(&mut test_name),
+                        source: mem::take(&mut source),
+                        operation,
+                        expected_output: mem::take(&mut output),
+                    });
+                    parse_state = Initial;
+                } else if line.starts_with("TEST") || line.starts_with("EXPECT") {
+                    panic!("Test cases: expected 'END', found '{}'", line);
+                } else {
+                    if !output.is_empty() {
+                        output += "\n";
+                    }
+                    output += line;
+                }
+            }
+        }
+    }
+
+    if parse_state != Initial {
+        panic!("Test cases: missing final 'END'");
+    }
+
+    test_cases
+}
+
+/// Prefix all lines of `text` with `INDENT`.
 fn indent(text: String) -> String {
     let mut output = String::new();
-    for line in text.lines() {
-        output.push_str("    ");
+    for (i, line) in text.lines().enumerate() {
+        if i != 0 {
+            output.push('\n');
+        }
+        output.push_str(INDENT);
         output.push_str(line);
     }
     output
 }
 
+/// Run Tardigrade source code, and print the return value if it ran successfully, or the error
+/// message if it didn't.
 fn run(tardigrade: &Tardigrade) -> String {
     match tardigrade.parse() {
         Err(parse_err) => format!("{}", parse_err),
-        Ok(ast) => match tardigrade.type_check(&ast) {
+        Ok(ast) => match ast.type_check() {
             Err(type_err) => format!("{}", type_err),
-            Ok(_) => match tardigrade.interpret(&ast) {
+            Ok(_) => match ast.interpret() {
                 Err(runtime_err) => format!("{}", runtime_err),
                 Ok(value) => format!("{}", value),
             },
@@ -156,9 +175,10 @@ fn run(tardigrade: &Tardigrade) -> String {
     }
 }
 
+/// Format Tardigrade source code
 fn fmt(tardigrade: &Tardigrade) -> String {
     match tardigrade.parse() {
         Err(parse_err) => format!("{}", parse_err),
-        Ok(ast) => format!("{}", tardigrade.format(&ast)),
+        Ok(ast) => ast.format(),
     }
 }
