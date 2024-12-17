@@ -1,0 +1,18 @@
+TEST fmt arith
+    1 * 2
+      +
+    33* 44
+EXPECT format
+    1 * 2 + 33 * 44
+END
+
+TEST fmt if
+    if true and false then1 + 2 else 3*4end
+EXPECT format
+    if true and false then
+        1 + 2
+    else
+        3 * 4
+    end
+END
+

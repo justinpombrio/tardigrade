@@ -116,7 +116,11 @@ fn parse_test_cases(input: String) -> Vec<TestCase> {
                     if !source.is_empty() {
                         source += "\n";
                     }
-                    source += line;
+                    if let Some(stripped_line) = line.strip_prefix(INDENT) {
+                        source += stripped_line;
+                    } else {
+                        panic!("Expected test case source line to be indented: '{}'", line);
+                    }
                 }
             }
             ReadingOutput => {
@@ -164,11 +168,11 @@ fn indent(text: String) -> String {
 /// message if it didn't.
 fn run(tardigrade: &Tardigrade) -> String {
     match tardigrade.parse() {
-        Err(parse_err) => format!("{}", parse_err),
+        Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
         Ok(ast) => match ast.type_check() {
-            Err(type_err) => format!("{}", type_err),
+            Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
             Ok(_) => match ast.interpret() {
-                Err(runtime_err) => format!("{}", runtime_err),
+                Err(runtime_err) => format!("{}", runtime_err.display_with_color_override(false)),
                 Ok(value) => format!("{}", value),
             },
         },
@@ -178,7 +182,7 @@ fn run(tardigrade: &Tardigrade) -> String {
 /// Format Tardigrade source code
 fn fmt(tardigrade: &Tardigrade) -> String {
     match tardigrade.parse() {
-        Err(parse_err) => format!("{}", parse_err),
+        Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
         Ok(ast) => ast.format(),
     }
 }

@@ -1,11 +1,3 @@
-TEST formatting
-    1 * 2
-      +
-    33* 44
-EXPECT format
-    1 * 2 + 33 * 44
-END
-
 TEST addition
     2 + 3
 EXPECT
@@ -18,10 +10,58 @@ EXPECT
     6
 END
 
-TEST precedence
+TEST arithm precedence
     1 * 2
       +
     33* 44
 EXPECT
     1454
+END
+
+TEST if true
+    if true then 3 else 4 end
+EXPECT
+    3
+END
+
+TEST if false
+    if false then 3 else 4 end
+EXPECT
+    4
+END
+
+TEST conditions
+      if true  and true  then 1    else 0 end
+    + if true  and false then 10   else 0 end
+    + if false and true  then 100  else 0 end
+    + if false and false then 1000 else 0 end
+    + if true  or  true  then 2    else 0 end
+    + if true  or  false then 20   else 0 end
+    + if false or  true  then 200  else 0 end
+    + if false or  false then 2000 else 0 end
+EXPECT
+    223
+END
+
+TEST comparisons
+      if 2 <  1 then 1    else 0 end
+    + if 2 <= 1 then 10   else 0 end
+    + if 2 >  1 then 100  else 0 end
+    + if 2 >= 1 then 1000 else 0 end
+    + if 2 <  2 then 2    else 0 end
+    + if 2 <= 2 then 20   else 0 end
+    + if 2 >  2 then 200  else 0 end
+    + if 2 >= 2 then 2000 else 0 end
+    + if 2 <  3 then 4    else 0 end
+    + if 2 <= 3 then 40   else 0 end
+    + if 2 >  3 then 400  else 0 end
+    + if 2 >= 3 then 4000 else 0 end
+EXPECT
+    3164
+END
+
+TEST conj precedence
+    1 + 2 < 3 * 4 and false or true
+EXPECT
+    true
 END

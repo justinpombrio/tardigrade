@@ -39,8 +39,7 @@ impl Tardigrade {
         let (expr, span) = parser.parse(&self.0)?;
         Ok(Ast {
             source: &self.0,
-            expr,
-            span,
+            expr: (expr, span),
         })
     }
 }
@@ -49,14 +48,13 @@ impl Tardigrade {
 /// which may be referenced in error messages.
 pub struct Ast<'s> {
     source: &'s Source,
-    expr: Expr,
-    span: Span,
+    expr: (Expr, Span),
 }
 
 impl<'s> Ast<'s> {
     /// Very naive pretty printing. Liable to put way too much on one line.
     pub fn format(&self) -> String {
-        format!("{}", self.expr)
+        format!("{}", &self.expr.0)
     }
 
     pub fn type_check(&self) -> Result<Type, Error<'s>> {
@@ -66,6 +64,6 @@ impl<'s> Ast<'s> {
 
     pub fn interpret(&self) -> Result<Value, Error<'s>> {
         let interpreter = Interpreter::new(self.source);
-        interpreter.interp_expr(&self.expr, self.span)
+        interpreter.interp_expr(&self.expr)
     }
 }
