@@ -29,9 +29,9 @@ fn prompt(buffer: &mut String) -> Result<&str, io::Error> {
 fn run(tardigrade: &Tardigrade) {
     match tardigrade.parse() {
         Err(parse_err) => println!("{}", parse_err),
-        Ok(ast) => match tardigrade.type_check(&ast) {
+        Ok(ast) => match ast.type_check() {
             Err(type_err) => println!("{}", type_err),
-            Ok(_) => match tardigrade.interpret(&ast) {
+            Ok(_) => match ast.interpret() {
                 Err(runtime_err) => println!("{}", runtime_err),
                 Ok(value) => println!("{}", value),
             },
@@ -42,7 +42,7 @@ fn run(tardigrade: &Tardigrade) {
 fn fmt(tardigrade: &Tardigrade) {
     match tardigrade.parse() {
         Err(parse_err) => println!("{}", parse_err),
-        Ok(ast) => println!("{}", tardigrade.format(&ast)),
+        Ok(ast) => println!("{}", ast.format()),
     }
 }
 

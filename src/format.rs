@@ -1,7 +1,10 @@
-use crate::ast::{Binop_II_I, Expr, Prec, WithSpan};
+use crate::ast::{Binop_II_I, Expr, Prec};
 use std::fmt;
 
+/// Naive pretty printing.
 trait Format {
+    /// Formats `self`. `indent` is the number of spaces to prefix each new line with, and `prec`
+    /// is the precedence level of the containing expression, used for inserting parentheses.
     fn format(&self, f: &mut fmt::Formatter, indent: u32, prec: Prec) -> fmt::Result;
 }
 
@@ -16,9 +19,9 @@ impl Format for Expr {
                 if binop.prec() > prec {
                     write!(f, "(")?;
                 }
-                x.inner.format(f, indent, binop.prec())?;
+                x.0.format(f, indent, binop.prec())?;
                 write!(f, " {} ", binop)?;
-                y.inner.format(f, indent, binop.prec())?;
+                y.0.format(f, indent, binop.prec())?;
                 if binop.prec() > prec {
                     write!(f, ")")?;
                 }
@@ -44,11 +47,5 @@ impl fmt::Display for Binop_II_I {
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.format(f, 0, Prec::MAX)
-    }
-}
-
-impl<T: fmt::Display> fmt::Display for WithSpan<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.inner)
     }
 }

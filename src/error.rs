@@ -5,6 +5,23 @@ use std::error;
 use std::fmt;
 use std::fmt::Write;
 
+/// An error message that contains source highlighting, like the following:
+///
+/// ```text
+/// Parse Error: Missing expression.
+///  --> addition:1:8
+///   |
+/// 1 |    2 + + 3
+///   |       ^ expected expression
+/// ```
+///
+/// In this example:
+///
+/// - `kind` is "Parse Error"
+/// - `source` is the whole source program, whose first line is `2 + + 3`.
+/// - `span` ranges from 1:8 to 1:9.
+/// - `label` is "expected expression"
+/// - `message` is "Missing expression."
 #[derive(Debug)]
 pub struct Error<'s> {
     pub kind: &'static str,

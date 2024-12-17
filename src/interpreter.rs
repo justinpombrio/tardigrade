@@ -1,4 +1,4 @@
-use crate::ast::{Binop_II_I, Expr, Span, Value, WithSpan};
+use crate::ast::{Binop_II_I, Expr, Span, Value};
 use crate::error::Error;
 use panfix::Source;
 
@@ -11,15 +11,17 @@ impl<'s> Interpreter<'s> {
         Interpreter { source }
     }
 
-    pub fn interp_expr(&self, expr: &WithSpan<Expr>) -> Result<Value, Error<'s>> {
+    /// Interpret the expression, producing either a result or a runtime Error. `expr` and `span`
+    /// must be from the `Source` that this interpreter was constructed with.
+    pub fn interp_expr(&self, expr: &Expr, span: Span) -> Result<Value, Error<'s>> {
         use Expr::*;
 
-        match &expr.inner {
+        match expr {
             Int(n) => Ok(Value::int(*n)),
             Binop_II_I(binop, x, y) => {
-                let x = self.interp_expr(x)?.into_int();
-                let y = self.interp_expr(y)?.into_int();
-                let z = self.apply_binop_ii_i(*binop, x, y, expr.span)?;
+                let x = self.interp_expr(&x.0, x.1)?.unwrap_int();
+                let y = self.interp_expr(&y.0, y.1)?.unwrap_int();
+                let z = self.apply_binop_ii_i(*binop, x, y, span)?;
                 Ok(Value::int(z))
             }
         }
