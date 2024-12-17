@@ -1,5 +1,7 @@
-use crate::ast::{Binop_II_I, Expr, Prec};
+use crate::ast::{Binop, Expr, Prec, Unop};
 use std::fmt;
+
+const INDENT: u32 = 4;
 
 /// Naive pretty printing.
 trait Format {
@@ -14,8 +16,20 @@ impl Format for Expr {
         use Expr::*;
 
         match self {
+            Bool(b) => write!(f, "{}", b),
             Int(n) => write!(f, "{}", n),
-            Binop_II_I(binop, x, y) => {
+            Unop(unop, x) => {
+                if unop.prec() > prec {
+                    write!(f, "(")?;
+                }
+                write!(f, " {} ", unop)?;
+                x.0.format(f, indent, unop.prec())?;
+                if unop.prec() > prec {
+                    write!(f, ")")?;
+                }
+                Ok(())
+            }
+            Binop(binop, x, y) => {
                 if binop.prec() > prec {
                     write!(f, "(")?;
                 }
@@ -27,19 +41,57 @@ impl Format for Expr {
                 }
                 Ok(())
             }
+            If(e_if, e_then, e_else) => {
+                write!(f, "if ")?;
+                e_if.0.format(f, indent + INDENT, Prec::MAX)?;
+                write!(f, " then")?;
+
+                newline(f, indent + INDENT)?;
+                e_then.0.format(f, indent + INDENT, Prec::MAX)?;
+
+                newline(f, indent)?;
+                write!(f, "else")?;
+
+                newline(f, indent + INDENT)?;
+                e_else.0.format(f, indent + INDENT, Prec::MAX)?;
+
+                newline(f, indent)?;
+                write!(f, "end")
+            }
         }
     }
 }
 
-impl fmt::Display for Binop_II_I {
+fn newline(f: &mut fmt::Formatter, indent: u32) -> fmt::Result {
+    writeln!(f)?;
+    write!(f, "{:indent$}", "", indent = indent as usize)
+}
+
+impl fmt::Display for Unop {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use Binop_II_I::*;
+        use Unop::*;
+
+        match self {
+            Not => write!(f, "not"),
+        }
+    }
+}
+
+impl fmt::Display for Binop {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use Binop::*;
 
         match self {
             Add => write!(f, "+"),
             Sub => write!(f, "-"),
             Mul => write!(f, "*"),
             Div => write!(f, "/"),
+            Lt => write!(f, "<"),
+            Le => write!(f, "<="),
+            Gt => write!(f, ">"),
+            Ge => write!(f, ">="),
+            And => write!(f, "and"),
+            Or => write!(f, "or"),
         }
     }
 }

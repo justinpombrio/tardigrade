@@ -1,9 +1,13 @@
-syn keyword kw fn if then else and or is do while for break continue not let case
+syn keyword kw fn if then else and or is do while for break continue not let case end
 syn match punct "[\[\](){};,=^!]"
 syn match punct "=>"
+syn keyword const true false
+syn match const "[0-9]*"
 " For test cases
 syn keyword meta TEST EXPECT END
 
+syn match op ">"
+syn match op "<"
 syn match op ">="
 syn match op "<="
 syn match op "=="
@@ -18,3 +22,4 @@ hi def link comm    Comment
 hi def link op      Operator
 hi def link type    Type
 hi def link meta    PreProc
+hi def link const   Constant

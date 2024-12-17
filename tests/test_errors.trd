@@ -1,0 +1,30 @@
+TEST
+    1
+    +
+EXPECT
+    Parse Error: Missing expression.
+     --> :2:2
+      |
+    2 |+
+      | ^ expected expression
+END
+
+TEST
+    1 + false
+EXPECT
+    Type Error: Expected type Int but found type Bool.
+     --> :1:5
+      |
+    1 |1 + false
+      |    ^^^^^ expected Int
+END
+
+TEST
+    1 / 0
+EXPECT
+    Runtime Error: Division by zero.
+     --> :1:5
+      |
+    1 |1 / 0
+      |    ^ was zero
+END
