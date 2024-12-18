@@ -9,6 +9,7 @@ const INDENT: &str = "    ";
 
 /// A single test case (TEST/EXPECT/END in the test files).
 struct TestCase {
+    filename: String,
     name: String,
     source: String,
     operation: Operation,
@@ -26,8 +27,8 @@ enum Operation {
 fn run_tests() {
     let test_files = read_test_files().unwrap();
     let mut test_cases = Vec::new();
-    for test_file in test_files {
-        test_cases.append(&mut parse_test_cases(test_file));
+    for (filename, contents) in test_files {
+        test_cases.append(&mut parse_test_cases(filename, contents));
     }
 
     for test in test_cases {
@@ -37,6 +38,7 @@ fn run_tests() {
             Operation::Run => indent(run(&tardigrade)),
         };
         if test.expected_output != actual_output {
+            println!("In {}:", test.filename);
             println!("TEST {}", test.name);
             println!("{}", test.source);
             match test.operation {
@@ -53,7 +55,8 @@ fn run_tests() {
 }
 
 /// Read all test case files (files in `TEST_DIR` that end in `TEST_EXT`).
-fn read_test_files() -> io::Result<Vec<String>> {
+/// Produces a list of `(filename, file_contents)`.
+fn read_test_files() -> io::Result<Vec<(String, String)>> {
     let mut tests = Vec::new();
     for entry in fs::read_dir(TEST_DIR)? {
         let entry = entry?;
@@ -63,14 +66,16 @@ fn read_test_files() -> io::Result<Vec<String>> {
             .map(|ext| ext.to_str() == Some(TEST_EXT))
             .unwrap_or(false)
         {
-            tests.push(fs::read_to_string(entry.path())?);
+            let filename = entry.path().to_string_lossy().to_string();
+            let file_contents = fs::read_to_string(entry.path())?;
+            tests.push((filename, file_contents));
         }
     }
     Ok(tests)
 }
 
 /// Parse the test cases from a single file. Panic on errors.
-fn parse_test_cases(input: String) -> Vec<TestCase> {
+fn parse_test_cases(filename: String, input: String) -> Vec<TestCase> {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum ParseState {
         Initial,
@@ -126,6 +131,7 @@ fn parse_test_cases(input: String) -> Vec<TestCase> {
             ReadingOutput => {
                 if line.starts_with("END") {
                     test_cases.push(TestCase {
+                        filename: filename.clone(),
                         name: mem::take(&mut test_name),
                         source: mem::take(&mut source),
                         operation,
@@ -169,11 +175,16 @@ fn indent(text: String) -> String {
 fn run(tardigrade: &Tardigrade) -> String {
     match tardigrade.parse() {
         Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
-        Ok(ast) => match ast.type_check() {
-            Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
-            Ok(_) => match ast.interpret() {
-                Err(runtime_err) => format!("{}", runtime_err.display_with_color_override(false)),
-                Ok(value) => format!("{}", value),
+        Ok(mut ast) => match ast.scope_check() {
+            Err(scope_err) => format!("{}", scope_err.display_with_color_override(false)),
+            Ok(()) => match ast.type_check() {
+                Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
+                Ok(_) => match ast.interpret() {
+                    Err(runtime_err) => {
+                        format!("{}", runtime_err.display_with_color_override(false))
+                    }
+                    Ok(value) => format!("{}", value),
+                },
             },
         },
     }

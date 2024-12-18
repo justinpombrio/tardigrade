@@ -4,10 +4,22 @@ EXPECT
     5
 END
 
+TEST subtraction
+    2 - 3
+EXPECT
+    -1
+END
+
 TEST multiplication
     2 * 3
 EXPECT
     6
+END
+
+TEST divison
+    7 / 2
+EXPECT
+    3
 END
 
 TEST arithm precedence
@@ -41,6 +53,15 @@ TEST conditions
     + if false or  false then 2000 else 0 end
 EXPECT
     223
+END
+
+TEST equality
+      if 1 == 1 then 1    else 0 end
+    + if 1 != 1 then 10   else 0 end
+    + if 1 == 2 then 100  else 0 end
+    + if 1 != 2 then 1000 else 0 end
+EXPECT
+    1001
 END
 
 TEST comparisons

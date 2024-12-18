@@ -1,0 +1,79 @@
+TEST func
+    func add_one(x: Int) -> Int =
+        x + 1
+    end
+    add_one(2)
+EXPECT
+    3
+END
+
+TEST func_outer_scope
+    let outer = 1
+    func outerf(arg: Int) -> Int =
+        outer + arg
+    end
+    outerf(outer + 1)
+EXPECT
+    3
+END
+
+TEST nested_funcs_2
+    let outer = 1
+    let shadowed = 2
+    func outerf(shadowed: Int) -> Int =
+        let y = 10 * outer + shadowed
+        func innerf(shadowed: Int, arg: Int) -> Int =
+            10 * outer + shadowed * arg + y
+        end
+        innerf(y, 7)
+    end
+    outerf(shadowed + 1)
+EXPECT
+    114
+END
+
+TEST tri
+    func tri(n: Int) -> Int =
+        if n == 0 then
+            0
+        else
+            n + tri(n - 1)
+        end
+    end
+    tri(2)
+EXPECT
+    3
+END
+
+TEST fib
+    func fib(n: Int) -> Int =
+        if n < 2 then
+            n
+        else
+            fib(n - 1) + fib(n - 2)
+        end
+    end
+    fib(7)
+EXPECT
+    13
+END
+
+TEST mutual_recursion
+    func yin(n: Int) -> Int =
+        if n == 0 then
+            1
+        else
+            yang(n - 1) + 1
+        end
+    end
+    func yang(n: Int) -> Int =
+        if n == 0 then
+            2
+        else
+            yin(n / 2) * 2
+        end
+    end
+    yin(10)
+EXPECT
+    15
+END

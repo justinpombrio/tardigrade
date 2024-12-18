@@ -6,7 +6,7 @@ EXPECT
      --> :2:2
       |
     2 |+
-      | ^ expected expression
+      | ^ missing expression
 END
 
 TEST
