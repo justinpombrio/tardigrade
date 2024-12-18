@@ -1,8 +1,11 @@
-syn keyword kw fn if then else and or is do while for break continue not let case end
-syn match punct "[\[\](){};,=^!]"
+syn keyword kw func if then else and or is do while for break continue not let case end
+syn keyword kw block
+syn match kw "->"
+syn match kw "="
+syn match punct "[\[\](){};,]"
 syn match punct "=>"
 syn keyword const true false
-syn match const "[0-9]*"
+syn match const "[0-9]+"
 " For test cases
 syn keyword meta TEST EXPECT END
 
@@ -11,6 +14,7 @@ syn match op "<"
 syn match op ">="
 syn match op "<="
 syn match op "=="
+syn match op "!="
 syn match op "[-+*/]"
 syn match type "[A-Z][a-zA-Z0-9_]*"
 

@@ -1,15 +1,19 @@
 mod ast;
 mod error;
 mod format;
+mod grammar;
 mod interpreter;
 mod parser;
+mod scope_checker;
+mod stack;
 mod type_checker;
 
-use ast::{Expr, Span, Value};
+use ast::{Block, Span, Value};
 use error::Error;
 use interpreter::Interpreter;
 use panfix::Source;
 use parser::Parser;
+use scope_checker::ScopeChecker;
 use std::io;
 use std::path::Path;
 use type_checker::{Type, TypeChecker};
@@ -36,10 +40,10 @@ impl Tardigrade {
     /// Attempt to parse this source code.
     pub fn parse(&self) -> Result<Ast, Error> {
         let parser = Parser::new();
-        let (expr, span) = parser.parse(&self.0)?;
+        let (block, span) = parser.parse(&self.0)?;
         Ok(Ast {
             source: &self.0,
-            expr: (expr, span),
+            block: (block, span),
         })
     }
 }
@@ -48,22 +52,33 @@ impl Tardigrade {
 /// which may be referenced in error messages.
 pub struct Ast<'s> {
     source: &'s Source,
-    expr: (Expr, Span),
+    block: (Block, Span),
 }
 
 impl<'s> Ast<'s> {
     /// Very naive pretty printing. Liable to put way too much on one line.
     pub fn format(&self) -> String {
-        format!("{}", &self.expr.0)
+        format!("{}", &self.block.0)
+    }
+
+    pub fn scope_check(&mut self) -> Result<(), Error<'s>> {
+        let mut scope_checker = ScopeChecker::new(self.source);
+        scope_checker.resolve_block(&mut self.block)?;
+        scope_checker.finish();
+        Ok(())
     }
 
     pub fn type_check(&self) -> Result<Type, Error<'s>> {
-        let type_checker = TypeChecker::new(self.source);
-        type_checker.check_expr(&self.expr)
+        let mut type_checker = TypeChecker::new(self.source);
+        let ty = type_checker.check_block(&self.block)?;
+        type_checker.finish();
+        Ok(ty)
     }
 
-    pub fn interpret(&self) -> Result<Value, Error<'s>> {
-        let interpreter = Interpreter::new(self.source);
-        interpreter.interp_expr(&self.expr)
+    pub fn interpret(&'s self) -> Result<Value<'s>, Error<'s>> {
+        let mut interpreter = Interpreter::new(self.source);
+        let value = interpreter.interp_block(&self.block)?;
+        interpreter.finish();
+        Ok(value)
     }
 }

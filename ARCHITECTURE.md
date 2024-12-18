@@ -6,8 +6,8 @@ many of the design decisions documented here.
 Tardigrade is designed to _be able to be made_ performant, but whenever there's a tradeoff between
 implementation clarity and performance it chooses clarity. Expect it to be slow!
 
-Though with compile time evaluation, lack of garbage collection, and lack of aliasing, it should
-be possible to make it extremely fast one day.
+Though with compile time evaluation and lack of garbage collection and aliasing, it should be
+possible to make it extremely fast one day.
 
 ### Memory: Value enum
 
@@ -22,16 +22,16 @@ This is the worst of both worlds! Why would anyone design things this way?
 
 There are two things I wish to achieve that together lead to this otherwise strange design:
 
-- Tardigrade will eventually be dealing with actual memory, which will not be tagged. Thus it is
-  important that the interpreter (later: compiler) not rely on being able to tell which variant a
-  `Value` is, because that information will not be available in the future.
+- A production version of Tardigrade would have to deal with actual memory, which will not be
+  tagged. Thus it is important that the interpreter (later: compiler) not rely on being able to tell
+  which variant a `Value` is, because that information will not be available in the future.
 - However, if Tardigrade writes an integer but later attempts to read that memory as a float, that's
   a bug and should be caught. This is why `Value` needs to know which variant it is: for detecting
   and reporting this bug.
 
 ### Memory: Refcounting
 
-Tardigrade passes small `Value`s by value, and refcounts large values. This refcounting is not meant
+Tardigrade will pass small `Value`s by value, and refcount large values. This refcounting is not meant
 to be how Tardigrade ultimately does memory management: it can handle its own memory just fine with
 mutable value semantics and does not need refcounts. The refcounting exists solely for detecting
 bugs: Tardigrade will check that the refcount is exactly 1 when a value is passed by ownership or
@@ -52,14 +52,12 @@ Tardigrade's Rust code, while "error" means that there's a mistake in the user's
 not about "recoverable" vs. "unrecoverable" errors: a (non-bug) error could be either recoverable or
 unrecoverable.)
 
-Tardigrade will _panic_ on bugs, because continuing in this case doesn't make much sense: we _know_
-that there's a bug in the code. There's a good chance we can't attempt to continue because we're
-missing the data we were trying to construct, and even if we could continue it would be foolish to
-do so because invariants were violated and data is corrupt. When panicking the message may not be
-particularly friendly, because it is written not for the person writing Tardigrade code, but for the
-person (me) developing Tardigrade itself. To be clear though: if Tardigrade is implemented
-correctly, it will not panic under any circumstances! Every call to `.unwrap()` etc. aims to be
-provably impossible to trigger from any possible input.
+Tardigrade will _panic_ on bugs because it's not safe (and not always even feasible) to continue
+running code when the code's assumptions have been violated. The panic messages are written for the
+person developing Tardigrade itself (me), and may not be particularly friendly to the person who
+wrote the Tardigrade code (e.g. it will have to talk about language internals). To be clear though:
+if Tardigrade is implemented correctly, it will not panic under any circumstances! Every call to
+`.unwrap()` etc. aims to be provably impossible to trigger from any possible input.
 
 In contrast, Tardigrade will return a _Result_ on errors. The error messages will be user friendly,
 because they're written to explain to the programmer what went wrong in their Tardigrade program.
@@ -91,7 +89,8 @@ EXPECT section. The test case doesn't say which kind of result it's expecting, b
 as a human (e.g. if it starts with "Parse Error:" then it's probably a parse error).
 
 I view this as the big insight of data driven test cases: make your tests produce strings, because
-strings are (i) easy to write, and (ii) easy to show a diff for if the test case fails.
+strings are (i) easy to write in a test case, and (ii) easy to show a diff for if the test case
+fails.
 
 For a much more thorough explanation of data driven tests, see Russ Cox's
 [Go Testing By Example](https://research.swtch.com/testing).
