@@ -12,6 +12,7 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
 
     grammar.regex("Int", r#"-?0|[1-9][0-9]*"#)?;
     grammar.regex("Var", r#"[_a-z][_0-9a-zA-Z]*"#)?;
+    grammar.regex("VarCT", r#"#[_a-z][_0-9a-zA-Z]*"#)?;
     grammar.string("Unit", "()")?;
     grammar.string("True", "true")?;
     grammar.string("False", "false")?;
@@ -20,8 +21,10 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
     grammar.string("TypeInt", "Int")?;
 
     grammar.op("Block", pattern!("block" "end"))?;
+    grammar.op("BlockCT", pattern!("#block" "end"))?;
     grammar.op("Func", pattern!("func" "(" ")" "=" "end"))?;
-
+    grammar.op("FuncCT", pattern!("#func" "(" ")" "=" "end"))?;
+    grammar.op("Comptime", pattern!("#(" ")"))?;
     grammar.op("Parens", pattern!("(" ")"))?;
 
     grammar.right_assoc();
@@ -60,12 +63,14 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
 
     grammar.right_assoc();
     grammar.op("If", pattern!("if" "then" "else" "end"))?;
+    grammar.op("IfCT", pattern!("#if" "then" "else" "end"))?;
 
     grammar.right_assoc();
     grammar.op("Comma", pattern!(_ "," _))?;
 
     grammar.right_assoc();
     grammar.op("Let", pattern!("let" "=" _))?;
+    grammar.op("LetCT", pattern!("#let" "=" _))?;
 
     grammar.right_assoc();
     grammar.juxtapose()?;
@@ -88,7 +93,9 @@ pub enum Token {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StmtToken {
     Let,
+    LetCT,
     Func,
+    FuncCT,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,11 +108,15 @@ pub enum TypeToken {
 pub enum ExprToken {
     Value(ValueToken),
     Var,
+    VarCT,
     Apply,
     Unop(Unop),
     Binop(Binop),
     If,
+    IfCT,
     Block,
+    BlockCT,
+    Comptime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,7 +138,9 @@ impl Token {
             "Colon" => Token::Colon,
             "Arrow" => Token::Arrow,
             "Let" => Token::Stmt(StmtToken::Let),
+            "LetCT" => Token::Stmt(StmtToken::LetCT),
             "Func" => Token::Stmt(StmtToken::Func),
+            "FuncCT" => Token::Stmt(StmtToken::FuncCT),
             "TypeBool" => Token::Type(TypeToken::Bool),
             "TypeInt" => Token::Type(TypeToken::Int),
             op_name => Token::Expr(ExprToken::from_str(op_name)),
@@ -143,8 +156,10 @@ impl ExprToken {
             "False" => ExprToken::Value(ValueToken::False),
             "Int" => ExprToken::Value(ValueToken::Int),
             "Var" => ExprToken::Var,
+            "VarCT" => ExprToken::VarCT,
             "Apply" => ExprToken::Apply,
             "If" => ExprToken::If,
+            "IfCT" => ExprToken::IfCT,
             "Not" => ExprToken::Unop(Unop::Not),
             "Add" => ExprToken::Binop(Binop::Add),
             "Sub" => ExprToken::Binop(Binop::Sub),
@@ -159,6 +174,8 @@ impl ExprToken {
             "And" => ExprToken::Binop(Binop::And),
             "Or" => ExprToken::Binop(Binop::Or),
             "Block" => ExprToken::Block,
+            "BlockCT" => ExprToken::BlockCT,
+            "Comptime" => ExprToken::Comptime,
             other => panic!("Bug in parser: missing token {}", other),
         }
     }
@@ -176,7 +193,9 @@ impl fmt::Display for Token {
             Colon => write!(f, "':'"),
             Arrow => write!(f, "'->'"),
             Stmt(Let) => write!(f, "let statement"),
+            Stmt(LetCT) => write!(f, "comptime let statement"),
             Stmt(Func) => write!(f, "function definition"),
+            Stmt(FuncCT) => write!(f, "comptime function definition"),
             Type(_) => write!(f, "type"),
             Expr(_) => write!(f, "expression"),
         }

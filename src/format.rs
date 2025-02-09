@@ -1,4 +1,4 @@
-use crate::ast::{Binop, Block, Expr, FuncStmt, LetStmt, Prec, Stmt, Unop};
+use crate::ast::{Binop, Block, Expr, FuncStmt, IfExpr, LetStmt, Param, Prec, Stmt, Unop};
 use crate::type_checker::Type;
 use std::fmt;
 
@@ -13,7 +13,7 @@ trait Format {
 
 impl Format for Block {
     fn format(&self, f: &mut fmt::Formatter, indent: u32, prec: Prec) -> fmt::Result {
-        for stmt in &self.0 {
+        for stmt in &self.stmts {
             stmt.0.format(f, indent, prec)?;
         }
         Ok(())
@@ -25,38 +25,56 @@ impl Format for Stmt {
         use Stmt::*;
 
         match self {
-            Expr(expr) => expr.0.format(f, indent, prec),
-            Let(LetStmt { var, definition }) => {
-                write!(f, "let {} = ", var.name)?;
-                definition.0.format(f, indent + INDENT, Prec::MAX)
-            }
-            Func(FuncStmt {
-                var,
-                params,
-                return_type,
-                body,
-            }) => {
-                write!(f, "func {}(", var.name)?;
-                let mut params = params.iter();
-                if let Some(param) = params.next() {
-                    write!(f, "{}: {}", param.var.name, param.ty)?;
-                }
-                for param in params {
-                    write!(f, ", {}: {}", param.var.name, param.ty)?;
-                }
-                write!(f, ")")?;
-                if *return_type != Type::Unit {
-                    write!(f, " -> {}", return_type)?;
-                }
-                write!(f, " =")?;
-
-                newline(f, indent + INDENT)?;
-                body.0.format(f, indent + INDENT, Prec::MAX)?;
-
-                newline(f, indent)?;
-                write!(f, "end")
-            }
+            Expr((expr, _)) => expr.format(f, indent, prec),
+            Let(let_stmt) => let_stmt.format(f, indent, prec),
+            Func(func_stmt) => func_stmt.format(f, indent, prec),
         }
+    }
+}
+
+impl Format for LetStmt {
+    fn format(&self, f: &mut fmt::Formatter, indent: u32, _prec: Prec) -> fmt::Result {
+        if self.comptime {
+            write!(f, "#")?;
+        }
+        write!(f, "let {} = ", self.var.name)?;
+        self.definition.0.format(f, indent + INDENT, Prec::MAX)
+    }
+}
+
+impl Format for FuncStmt {
+    fn format(&self, f: &mut fmt::Formatter, indent: u32, prec: Prec) -> fmt::Result {
+        if self.comptime {
+            write!(f, "#")?;
+        }
+        write!(f, "func {}(", self.var.name)?;
+        let mut params = self.params.iter();
+        if let Some(param) = params.next() {
+            param.format(f, indent, prec)?;
+        }
+        for param in params {
+            write!(f, ", ")?;
+            param.format(f, indent, prec)?;
+        }
+        write!(f, ")")?;
+        if self.return_type != Type::Unit {
+            write!(f, " -> {}", self.return_type)?;
+        }
+        write!(f, " =")?;
+
+        newline(f, indent + INDENT)?;
+        self.body.0.format(f, indent + INDENT, Prec::MAX)?;
+
+        newline(f, indent)?;
+        write!(f, "end")
+    }
+}
+
+impl Format for Param {
+    fn format(&self, f: &mut fmt::Formatter, _indent: u32, _prec: Prec) -> fmt::Result {
+        write!(f, "{}", self.var.name)?;
+        write!(f, ": ")?;
+        write!(f, "{}", self.ty)
     }
 }
 
@@ -65,7 +83,8 @@ impl Format for Expr {
         use Expr::*;
 
         match self {
-            Var(v) => write!(f, "{}", v.name),
+            Var(refn) if refn.comptime => write!(f, "#{}", refn.name),
+            Var(refn) => write!(f, "{}", refn.name),
             Unit => write!(f, "()"),
             Bool(b) => write!(f, "{}", b),
             Int(n) => write!(f, "{}", n),
@@ -92,23 +111,7 @@ impl Format for Expr {
                 }
                 Ok(())
             }
-            If(e_if, e_then, e_else) => {
-                write!(f, "if ")?;
-                e_if.0.format(f, indent + INDENT, Prec::MAX)?;
-                write!(f, " then")?;
-
-                newline(f, indent + INDENT)?;
-                e_then.0.format(f, indent + INDENT, Prec::MAX)?;
-
-                newline(f, indent)?;
-                write!(f, "else")?;
-
-                newline(f, indent + INDENT)?;
-                e_else.0.format(f, indent + INDENT, Prec::MAX)?;
-
-                newline(f, indent)?;
-                write!(f, "end")
-            }
+            If(if_expr) => if_expr.format(f, indent, prec),
             Apply(func, args) => {
                 write!(f, "{}(", func.0.name)?;
                 let mut args_iter = args.iter();
@@ -122,11 +125,42 @@ impl Format for Expr {
                 write!(f, ")")
             }
             Block(block) => {
+                if block.0.comptime {
+                    write!(f, "#")?;
+                }
                 writeln!(f, "block")?;
                 block.0.format(f, indent + INDENT, prec)?;
                 writeln!(f, "end")
             }
+            Comptime(expr) => {
+                write!(f, "#(")?;
+                expr.0.format(f, indent + INDENT, Prec::MAX)?;
+                write!(f, ")")
+            }
         }
+    }
+}
+
+impl Format for IfExpr {
+    fn format(&self, f: &mut fmt::Formatter, indent: u32, _prec: Prec) -> fmt::Result {
+        if self.comptime {
+            write!(f, "#")?;
+        }
+        write!(f, "if ")?;
+        self.e_if.0.format(f, indent + INDENT, Prec::MAX)?;
+        write!(f, " then")?;
+
+        newline(f, indent + INDENT)?;
+        self.e_then.0.format(f, indent + INDENT, Prec::MAX)?;
+
+        newline(f, indent)?;
+        write!(f, "else")?;
+
+        newline(f, indent + INDENT)?;
+        self.e_else.0.format(f, indent + INDENT, Prec::MAX)?;
+
+        newline(f, indent)?;
+        write!(f, "end")
     }
 }
 

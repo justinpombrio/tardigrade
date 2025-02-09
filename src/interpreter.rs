@@ -1,4 +1,4 @@
-use crate::ast::{self, Block, Expr, LetStmt, Span, Value};
+use crate::ast::{self, Block, Expr, Span, Value};
 use crate::error::Error;
 use crate::stack::Stack;
 use panfix::Source;
@@ -19,18 +19,21 @@ impl<'s> Interpreter<'s> {
     pub fn interp_block(&mut self, block: &'s (Block, Span)) -> Result<Value<'s>, Error<'s>> {
         use ast::Stmt::*;
 
+        no_comptime(block.0.comptime);
         let start_of_block = self.stack.start_block();
         let mut result = Value::unit();
-        for stmt in &block.0 .0 {
+        for stmt in &block.0.stmts {
             match &stmt.0 {
                 Expr(e) => {
                     result = self.interp_expr(e)?;
                 }
-                Let(LetStmt { definition, .. }) => {
-                    let value = self.interp_expr(definition)?;
+                Let(let_stmt) => {
+                    no_comptime(let_stmt.comptime);
+                    let value = self.interp_expr(&let_stmt.definition)?;
                     self.stack.push(value);
                 }
                 Func(func) => {
+                    no_comptime(func.comptime);
                     let value = Value::func_ptr(func);
                     self.stack.push(value);
                 }
@@ -48,7 +51,10 @@ impl<'s> Interpreter<'s> {
         use Expr::*;
 
         match &expr.0 {
-            Var(var_refn) => Ok(self.stack.lookup(var_refn.refn()).clone()),
+            Var(var_refn) => {
+                no_comptime(var_refn.comptime);
+                Ok(self.stack.lookup(var_refn.refn()).clone())
+            }
             Unit => Ok(Value::unit()),
             Bool(b) => Ok(Value::bool(*b)),
             Int(n) => Ok(Value::int(*n)),
@@ -74,12 +80,13 @@ impl<'s> Interpreter<'s> {
             Binop(Ge, x, y) => self.apply_binop_ii_b(x, y, |x, y| x >= y),
             Binop(And, x, y) => self.apply_binop_bb_b(x, y, |x, y| x && y),
             Binop(Or, x, y) => self.apply_binop_bb_b(x, y, |x, y| x || y),
-            If(e_if, e_then, e_else) => {
-                let b = self.interp_expr(e_if)?.unwrap_bool();
+            If(if_expr) => {
+                no_comptime(if_expr.comptime);
+                let b = self.interp_expr(&if_expr.e_if)?.unwrap_bool();
                 if b {
-                    self.interp_expr(e_then)
+                    self.interp_expr(&if_expr.e_then)
                 } else {
-                    self.interp_expr(e_else)
+                    self.interp_expr(&if_expr.e_else)
                 }
             }
             Apply(var_refn, args) => {
@@ -94,7 +101,14 @@ impl<'s> Interpreter<'s> {
                 self.stack.end_frame(func.params.len());
                 Ok(result)
             }
-            Block(block) => self.interp_block(block),
+            Block(block) => {
+                no_comptime(block.0.comptime);
+                self.interp_block(block)
+            }
+            Comptime(_) => {
+                no_comptime(true);
+                unreachable!();
+            }
         }
     }
 
@@ -152,5 +166,12 @@ impl<'s> Interpreter<'s> {
             "was zero",
             "Division by zero.",
         )
+    }
+}
+
+#[track_caller]
+fn no_comptime(comptime: bool) {
+    if comptime {
+        panic!("Interp: leftover comptime")
     }
 }

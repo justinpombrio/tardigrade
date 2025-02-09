@@ -14,7 +14,10 @@ pub struct Var {
 }
 
 #[derive(Debug)]
-pub struct Block(pub Vec<(Stmt, Span)>);
+pub struct Block {
+    pub stmts: Vec<(Stmt, Span)>,
+    pub comptime: bool,
+}
 
 #[derive(Debug)]
 pub enum Stmt {
@@ -27,9 +30,10 @@ pub enum Stmt {
 pub struct LetStmt {
     pub var: Var,
     pub definition: (Expr, Span),
+    pub comptime: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Param {
     pub var: Var,
     pub ty: Type,
@@ -41,6 +45,15 @@ pub struct FuncStmt {
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: (Block, Span),
+    pub comptime: bool,
+}
+
+#[derive(Debug)]
+pub struct IfExpr {
+    pub e_if: Box<(Expr, Span)>,
+    pub e_then: Box<(Expr, Span)>,
+    pub e_else: Box<(Expr, Span)>,
+    pub comptime: bool,
 }
 
 #[derive(Debug)]
@@ -51,9 +64,10 @@ pub enum Expr {
     Int(i32),
     Unop(Unop, Box<(Expr, Span)>),
     Binop(Binop, Box<(Expr, Span)>, Box<(Expr, Span)>),
-    If(Box<(Expr, Span)>, Box<(Expr, Span)>, Box<(Expr, Span)>),
+    If(IfExpr),
     Apply((VarRefn, Span), Vec<(Expr, Span)>),
     Block((Block, Span)),
+    Comptime(Box<(Expr, Span)>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,19 +95,21 @@ pub enum Binop {
 /// `top-offset` is the size of the topmost stack frame at the point of reference.
 ///
 /// (See https://en.wikipedia.org/wiki/Call_stack#Lexically_nested_routines)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VarRefn {
     pub name: String,
     // Filled out during scope checking
     pub refn: Option<StackRefn>,
+    pub comptime: bool,
 }
 
 impl VarRefn {
-    pub fn new(name: &str) -> VarRefn {
+    pub fn new(name: &str, comptime: bool) -> VarRefn {
         VarRefn {
             name: name.to_owned(),
             // Will be filled out during scope checking
             refn: None,
+            comptime,
         }
     }
 
@@ -208,6 +224,18 @@ impl<'s> Value<'s> {
             func
         } else {
             self.type_mismatch(None)
+        }
+    }
+
+    // TODO: Have an Expr::Literal.
+    pub fn into_expr(self) -> Option<Expr> {
+        use ValueCase::*;
+
+        match self.0 {
+            Unit => Some(Expr::Unit),
+            Bool(b) => Some(Expr::Bool(b)),
+            Int(n) => Some(Expr::Int(n)),
+            FuncPtr(_) => None,
         }
     }
 

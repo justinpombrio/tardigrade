@@ -136,7 +136,7 @@ impl<T: Debug + Display> Stack<T> {
 
     /// Find the referenced item in the stack.
     #[track_caller]
-    pub fn lookup(&mut self, refn: StackRefn) -> &T {
+    pub fn lookup(&self, refn: StackRefn) -> &T {
         let mut frame = self.frame;
         for _ in 0..refn.depth {
             frame = self.enclosing_frame(frame);

@@ -26,29 +26,37 @@ pub struct FuncType {
 
 pub struct TypeChecker<'s> {
     source: &'s Source,
-    stack: Stack<ValueOrFuncType>,
+    ct_stack: Stack<ValueOrFuncType>,
+    rt_stack: Stack<ValueOrFuncType>,
 }
 
 impl<'s> TypeChecker<'s> {
     pub fn new(source: &'s Source) -> TypeChecker<'s> {
         TypeChecker {
             source,
-            stack: Stack::new(),
+            ct_stack: Stack::new(),
+            rt_stack: Stack::new(),
         }
     }
 
-    pub fn check_block(&mut self, block: &(Block, Span)) -> Result<Type, Error<'s>> {
+    pub fn check_block(
+        &mut self,
+        block: &(Block, Span),
+        comptime: bool,
+    ) -> Result<Type, Error<'s>> {
         use ast::Stmt::*;
 
+        let comptime = comptime | block.0.comptime;
         let mut result = Type::Unit;
-        let start_of_block = self.stack.start_block();
-        let mut stmts = block.0 .0.iter().peekable();
+        let start_of_block = self.stack_mut(comptime).start_block();
+        let mut stmts = block.0.stmts.iter().peekable();
         while let Some((stmt, _)) = stmts.next() {
             match &stmt {
-                Expr(expr) => result = self.check_expr(expr)?,
+                Expr(expr) => result = self.check_expr(expr, comptime)?,
                 Let(let_stmt) => {
-                    let ty = self.check_expr(&let_stmt.definition)?;
-                    self.stack.push(ValueOrFuncType::Value(ty));
+                    let comptime = comptime | let_stmt.comptime;
+                    let ty = self.check_expr(&let_stmt.definition, comptime)?;
+                    self.stack_mut(comptime).push(ValueOrFuncType::Value(ty));
                 }
                 Func(func) => {
                     let contiguous_funcs = {
@@ -62,63 +70,68 @@ impl<'s> TypeChecker<'s> {
                         funcs
                     };
                     for func in &contiguous_funcs {
+                        let comptime = comptime | func.comptime;
                         let ty = type_of_function(func);
-                        self.stack.push(ValueOrFuncType::Func(ty));
+                        self.stack_mut(comptime).push(ValueOrFuncType::Func(ty));
                     }
                     for func in contiguous_funcs {
+                        let comptime = comptime | func.comptime;
                         for param in &func.params {
-                            self.stack.push(ValueOrFuncType::Value(param.ty.clone()));
+                            self.stack_mut(comptime)
+                                .push(ValueOrFuncType::Value(param.ty.clone()));
                         }
-                        self.stack.start_frame_at_depth_zero();
-                        self.expect_block(&func.body, &func.return_type)?;
-                        self.stack.end_frame(func.params.len());
+                        self.stack_mut(comptime).start_frame_at_depth_zero();
+                        self.expect_block(&func.body, &func.return_type, comptime)?;
+                        self.stack_mut(comptime).end_frame(func.params.len());
                     }
                 }
             }
         }
-        self.stack.end_block(start_of_block);
+        self.stack_mut(comptime).end_block(start_of_block);
         Ok(result)
     }
 
     /// Type check the given expression, which must be from the `Source` that this `TypeChecker`
     /// was cosntructed from.
-    pub fn check_expr(&mut self, expr: &(Expr, Span)) -> Result<Type, Error<'s>> {
+    pub fn check_expr(&mut self, expr: &(Expr, Span), comptime: bool) -> Result<Type, Error<'s>> {
         use ast::Binop::*;
         use ast::Unop::*;
         use Expr::*;
 
         match &expr.0 {
             Var(var_refn) => {
-                let ty = self.stack.lookup(var_refn.refn());
+                let ty = self
+                    .stack(comptime | var_refn.comptime)
+                    .lookup(var_refn.refn());
                 expect_value(self.source, ty, expr.1).cloned()
             }
             Unit => Ok(Type::Unit),
             Bool(_) => Ok(Type::Bool),
             Int(_) => Ok(Type::Int),
             Unop(Not, x) => {
-                self.expect_expr(x, &Type::Bool)?;
+                self.expect_expr(x, &Type::Bool, comptime)?;
                 Ok(Type::Bool)
             }
             Binop(Add | Sub | Mul | Div, x, y) => {
-                self.expect_expr(x, &Type::Int)?;
-                self.expect_expr(y, &Type::Int)?;
+                self.expect_expr(x, &Type::Int, comptime)?;
+                self.expect_expr(y, &Type::Int, comptime)?;
                 Ok(Type::Int)
             }
             Binop(Eq | Ne | Lt | Le | Gt | Ge, x, y) => {
-                self.expect_expr(x, &Type::Int)?;
-                self.expect_expr(y, &Type::Int)?;
+                self.expect_expr(x, &Type::Int, comptime)?;
+                self.expect_expr(y, &Type::Int, comptime)?;
                 Ok(Type::Bool)
             }
             Binop(And | Or, x, y) => {
-                self.expect_expr(x, &Type::Bool)?;
-                self.expect_expr(y, &Type::Bool)?;
+                self.expect_expr(x, &Type::Bool, comptime)?;
+                self.expect_expr(y, &Type::Bool, comptime)?;
 
                 Ok(Type::Bool)
             }
-            If(e_if, e_then, e_else) => {
-                self.expect_expr(e_if, &Type::Bool)?;
-                let t_then = self.check_expr(e_then)?;
-                let t_else = self.check_expr(e_else)?;
+            If(if_expr) => {
+                self.expect_expr(&if_expr.e_if, &Type::Bool, comptime | if_expr.comptime)?;
+                let t_then = self.check_expr(&if_expr.e_then, comptime)?;
+                let t_else = self.check_expr(&if_expr.e_else, comptime)?;
                 if t_then == t_else {
                     Ok(t_else)
                 } else {
@@ -126,7 +139,7 @@ impl<'s> TypeChecker<'s> {
                 }
             }
             Apply(var_refn, args) => {
-                let ty = self.stack.lookup(var_refn.0.refn()).clone();
+                let ty = self.stack_mut(comptime).lookup(var_refn.0.refn()).clone();
                 let func_type = expect_func(self.source, &ty, var_refn.1)?;
                 if func_type.params.len() != args.len() {
                     return Err(error_wrong_num_args(
@@ -137,24 +150,27 @@ impl<'s> TypeChecker<'s> {
                     ));
                 }
                 for (arg, param) in args.iter().zip(func_type.params.iter()) {
-                    self.expect_expr(arg, param)?;
+                    self.expect_expr(arg, param, comptime)?;
                 }
                 Ok(func_type.return_type.deref().clone())
             }
-            Block(block) => self.check_block(block),
+            Block(block) => self.check_block(block, comptime),
+            Comptime(expr) => self.check_expr(expr, true),
         }
     }
 
     pub fn finish(&self) {
-        self.stack.verify_empty();
+        self.ct_stack.verify_empty();
+        self.rt_stack.verify_empty();
     }
 
     fn expect_block<'t>(
         &mut self,
         block: &'t (Block, Span),
         expected: &'t Type,
+        comptime: bool,
     ) -> Result<&'t Type, Error<'s>> {
-        let actual = self.check_block(block)?;
+        let actual = self.check_block(block, comptime)?;
         if &actual == expected {
             Ok(expected)
         } else {
@@ -166,12 +182,27 @@ impl<'s> TypeChecker<'s> {
         &mut self,
         expr: &'t (Expr, Span),
         expected: &'t Type,
+        comptime: bool,
     ) -> Result<&'t Type, Error<'s>> {
-        let actual = self.check_expr(expr)?;
+        let actual = self.check_expr(expr, comptime)?;
         if &actual == expected {
             Ok(expected)
         } else {
             Err(error_type_mismatch(self.source, &actual, expected, expr.1))
+        }
+    }
+
+    fn stack(&self, comptime: bool) -> &Stack<ValueOrFuncType> {
+        match comptime {
+            true => &self.ct_stack,
+            false => &self.rt_stack,
+        }
+    }
+
+    fn stack_mut(&mut self, comptime: bool) -> &mut Stack<ValueOrFuncType> {
+        match comptime {
+            true => &mut self.ct_stack,
+            false => &mut self.rt_stack,
         }
     }
 }

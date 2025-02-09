@@ -20,6 +20,9 @@ struct TestCase {
 #[derive(Debug, Clone, Copy)]
 enum Operation {
     Format,
+    ScopeCheck,
+    TypeCheck,
+    Compile,
     Run,
 }
 
@@ -34,15 +37,22 @@ fn run_tests() {
     for test in test_cases {
         let tardigrade = Tardigrade::new(&test.name, test.source.clone());
         let actual_output = match test.operation {
-            Operation::Format => indent(fmt(&tardigrade)),
-            Operation::Run => indent(run(&tardigrade)),
+            Operation::Format => format(&tardigrade),
+            Operation::ScopeCheck => scope_check(&tardigrade),
+            Operation::TypeCheck => type_check(&tardigrade),
+            Operation::Compile => compile(&tardigrade),
+            Operation::Run => run(&tardigrade),
         };
+        let actual_output = indent(actual_output);
         if test.expected_output != actual_output {
             println!("In {}:", test.filename);
             println!("TEST {}", test.name);
             println!("{}", test.source);
             match test.operation {
                 Operation::Format => println!("EXPECT format"),
+                Operation::TypeCheck => println!("EXPECT type"),
+                Operation::ScopeCheck => println!("EXPECT scope"),
+                Operation::Compile => println!("EXPECT compile"),
                 Operation::Run => println!("EXPECT"),
             }
             println!("{}", test.expected_output);
@@ -108,6 +118,9 @@ fn parse_test_cases(filename: String, input: String) -> Vec<TestCase> {
                 if line.starts_with("EXPECT") {
                     operation = match line {
                         "EXPECT format" => Operation::Format,
+                        "EXPECT scope" => Operation::ScopeCheck,
+                        "EXPECT type" => Operation::TypeCheck,
+                        "EXPECT compile" => Operation::Compile,
                         "EXPECT" => Operation::Run,
                         _ => panic!(
                             "Test cases: expected 'EXPECT' or 'EXPECT format', found '{}'",
@@ -170,30 +183,52 @@ fn indent(text: String) -> String {
     output
 }
 
-/// Run Tardigrade source code, and print the return value if it ran successfully, or the error
-/// message if it didn't.
-fn run(tardigrade: &Tardigrade) -> String {
+fn format(tardigrade: &Tardigrade) -> String {
+    match tardigrade.parse() {
+        Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
+        Ok(ast) => ast.format(),
+    }
+}
+
+fn scope_check(tardigrade: &Tardigrade) -> String {
     match tardigrade.parse() {
         Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
         Ok(mut ast) => match ast.scope_check() {
-            Err(scope_err) => format!("{}", scope_err.display_with_color_override(false)),
-            Ok(()) => match ast.type_check() {
-                Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
-                Ok(_) => match ast.interpret() {
-                    Err(runtime_err) => {
-                        format!("{}", runtime_err.display_with_color_override(false))
-                    }
-                    Ok(value) => format!("{}", value),
-                },
-            },
+            Err(err) => format!("{}", err.display_with_color_override(false)),
+            Ok(()) => "ok".to_owned(),
         },
     }
 }
 
-/// Format Tardigrade source code
-fn fmt(tardigrade: &Tardigrade) -> String {
+fn type_check(tardigrade: &Tardigrade) -> String {
     match tardigrade.parse() {
         Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
-        Ok(ast) => ast.format(),
+        Ok(mut ast) => match ast.type_check() {
+            Err(err) => format!("{}", err.display_with_color_override(false)),
+            Ok(ty) => format!("{}", ty),
+        },
+    }
+}
+
+fn compile(tardigrade: &Tardigrade) -> String {
+    match tardigrade.parse() {
+        Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
+        Ok(mut ast) => match ast.compile() {
+            Err(err) => format!("{}", err.display_with_color_override(false)),
+            Ok(compiled_ast) => compiled_ast.format(),
+        },
+    }
+}
+
+fn run(tardigrade: &Tardigrade) -> String {
+    match tardigrade.parse() {
+        Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
+        Ok(mut ast) => match ast.compile() {
+            Err(err) => format!("{}", err.display_with_color_override(false)),
+            Ok(compiled_ast) => match compiled_ast.interpret() {
+                Err(err) => format!("{}", err.display_with_color_override(false)),
+                Ok(value) => format!("{}", value),
+            },
+        },
     }
 }
