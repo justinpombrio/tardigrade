@@ -28,7 +28,8 @@ impl Format for Stmt {
             Expr(expr) => expr.0.format(f, indent, prec),
             Let(LetStmt { var, definition }) => {
                 write!(f, "let {} = ", var.name)?;
-                definition.0.format(f, indent + INDENT, Prec::MAX)
+                definition.0.format(f, indent + INDENT, Prec::MAX)?;
+                writeln!(f)
             }
             Func(FuncStmt {
                 var,
@@ -54,7 +55,7 @@ impl Format for Stmt {
                 body.0.format(f, indent + INDENT, Prec::MAX)?;
 
                 newline(f, indent)?;
-                write!(f, "end")
+                writeln!(f, "end")
             }
         }
     }

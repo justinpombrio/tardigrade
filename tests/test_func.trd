@@ -17,13 +17,13 @@ EXPECT
     3
 END
 
-TEST nested_funcs_2
+TEST nested_funcs
     let outer = 1
     let shadowed = 2
     func outerf(shadowed: Int) -> Int =
         let y = 10 * outer + shadowed
         func innerf(shadowed: Int, arg: Int) -> Int =
-            10 * outer + shadowed * arg + y
+            100 * outer + shadowed * arg + y
         end
         innerf(y, 7)
     end

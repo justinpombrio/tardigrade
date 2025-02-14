@@ -24,14 +24,6 @@ use std::fmt::{self, Debug, Display};
 const PREVIOUS_FRAME_OFFSET: isize = -1;
 const PARENT_FRAME_OFFSET: isize = -2;
 
-#[derive(Debug, Clone, Copy)]
-pub struct StackRefn {
-    /// Number of nested lexically enclosing scopes.
-    depth: usize,
-    /// Offset of the referenced variable, relative to the lexically enclosing stack frame.
-    offset: isize,
-}
-
 #[derive(Debug)]
 pub struct Stack<T: Debug + Display> {
     entries: Vec<StackEntry<T>>,
@@ -62,20 +54,14 @@ impl<T: Debug + Display> Stack<T> {
         self.entries.truncate(start_of_block);
     }
 
-    pub fn start_frame(&mut self, refn: StackRefn) {
+    pub fn start_frame(&mut self, depth: usize) {
         let prev_frame = self.frame;
         let mut enclosing_frame = self.frame;
-        for _ in 0..refn.depth {
+        for _ in 0..depth {
             enclosing_frame = self.enclosing_frame(enclosing_frame);
         }
         self.entries.push(StackEntry::Link(enclosing_frame));
         self.entries.push(StackEntry::Link(prev_frame));
-        self.frame = self.entries.len();
-    }
-
-    pub fn start_frame_at_depth_zero(&mut self) {
-        self.entries.push(StackEntry::Link(self.frame));
-        self.entries.push(StackEntry::Link(self.frame));
         self.frame = self.entries.len();
     }
 
@@ -89,59 +75,14 @@ impl<T: Debug + Display> Stack<T> {
         self.entries.push(StackEntry::Item(item));
     }
 
-    /// A very specialized function for constructing a `StackRef`, meant to be called only during
-    /// scope checking. The stack alone lacks sufficient information to construct references, so
-    /// you must also pass in the number of arguments in each stack frame. Importantly, if A calls
-    /// B then B's arguments are counted in A's frame.
-    pub fn find_refn_slowly(
-        &self,
-        mut num_args_per_frame: &[usize],
-        predicate: impl Fn(&T) -> bool,
-    ) -> Option<StackRefn> {
-        let mut depth = 0;
-        let mut num_args = 0;
-        let mut rev_offset: usize = 0;
-        let mut entries_iter = self.entries.iter().rev();
-        while let Some(entry) = entries_iter.next() {
-            match entry {
-                StackEntry::Link(_) => {
-                    entries_iter.next(); // skip the other link too
-                    depth += 1;
-                    num_args = *num_args_per_frame
-                        .last()
-                        .expect("stack: missing num_args frame");
-                    num_args_per_frame = &num_args_per_frame[..num_args_per_frame.len() - 1];
-                    rev_offset = 0;
-                }
-                StackEntry::Item(item) => {
-                    if predicate(item) {
-                        if rev_offset < num_args {
-                            return Some(StackRefn {
-                                offset: -(rev_offset as isize) - 3,
-                                depth: depth - 1,
-                            });
-                        } else {
-                            let offset = entries_iter
-                                .take_while(|entry| matches!(entry, StackEntry::Item(_)))
-                                .count() as isize;
-                            return Some(StackRefn { offset, depth });
-                        }
-                    }
-                    rev_offset += 1;
-                }
-            }
-        }
-        None
-    }
-
     /// Find the referenced item in the stack.
     #[track_caller]
-    pub fn lookup(&mut self, refn: StackRefn) -> &T {
+    pub fn lookup(&mut self, depth: usize, offset: isize) -> &T {
         let mut frame = self.frame;
-        for _ in 0..refn.depth {
+        for _ in 0..depth {
             frame = self.enclosing_frame(frame);
         }
-        self.get_item(frame, refn.offset)
+        self.get_item(frame, offset)
     }
 
     pub fn verify_empty(&self) {

@@ -31,7 +31,7 @@ fn run(tardigrade: &Tardigrade) {
         Err(parse_err) => println!("{}", parse_err),
         Ok(ast) => match ast.type_check() {
             Err(type_err) => println!("{}", type_err),
-            Ok(_) => match ast.interpret() {
+            Ok((_, ast)) => match ast.interpret() {
                 Err(runtime_err) => println!("{}", runtime_err),
                 Ok(value) => println!("{}", value),
             },

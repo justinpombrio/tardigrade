@@ -32,23 +32,26 @@ fn run_tests() {
     }
 
     for test in test_cases {
+        eprintln!("TEST {} in {} ...", test.name, test.filename);
         let tardigrade = Tardigrade::new(&test.name, test.source.clone());
         let actual_output = match test.operation {
             Operation::Format => indent(fmt(&tardigrade)),
             Operation::Run => indent(run(&tardigrade)),
         };
-        if test.expected_output != actual_output {
-            println!("In {}:", test.filename);
-            println!("TEST {}", test.name);
-            println!("{}", test.source);
+        if test.expected_output == actual_output {
+            eprintln!("  ok");
+        } else {
+            eprintln!("In {}:", test.filename);
+            eprintln!("TEST {}", test.name);
+            eprintln!("{}", test.source);
             match test.operation {
-                Operation::Format => println!("EXPECT format"),
-                Operation::Run => println!("EXPECT"),
+                Operation::Format => eprintln!("EXPECT format"),
+                Operation::Run => eprintln!("EXPECT"),
             }
-            println!("{}", test.expected_output);
-            println!("ACTUAL");
-            println!("{}", actual_output);
-            println!("END");
+            eprintln!("{}", test.expected_output);
+            eprintln!("ACTUAL");
+            eprintln!("{}", actual_output);
+            eprintln!("END");
             panic!("Test case failed.");
         }
     }
@@ -175,16 +178,13 @@ fn indent(text: String) -> String {
 fn run(tardigrade: &Tardigrade) -> String {
     match tardigrade.parse() {
         Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
-        Ok(mut ast) => match ast.scope_check() {
-            Err(scope_err) => format!("{}", scope_err.display_with_color_override(false)),
-            Ok(()) => match ast.type_check() {
-                Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
-                Ok(_) => match ast.interpret() {
-                    Err(runtime_err) => {
-                        format!("{}", runtime_err.display_with_color_override(false))
-                    }
-                    Ok(value) => format!("{}", value),
-                },
+        Ok(ast) => match ast.type_check() {
+            Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
+            Ok((_, ast)) => match ast.interpret() {
+                Err(runtime_err) => {
+                    format!("{}", runtime_err.display_with_color_override(false))
+                }
+                Ok(value) => format!("{}", value),
             },
         },
     }
