@@ -1,4 +1,3 @@
-use crate::stack::StackRefn;
 use crate::type_checker::Type;
 use std::fmt;
 
@@ -7,6 +6,8 @@ use std::fmt;
  *******/
 
 pub type Span = panfix::Span;
+
+pub type FuncId = usize;
 
 #[derive(Debug, Clone)]
 pub struct Var {
@@ -52,7 +53,7 @@ pub enum Expr {
     Unop(Unop, Box<(Expr, Span)>),
     Binop(Binop, Box<(Expr, Span)>, Box<(Expr, Span)>),
     If(Box<(Expr, Span)>, Box<(Expr, Span)>, Box<(Expr, Span)>),
-    Apply((VarRefn, Span), Vec<(Expr, Span)>),
+    Apply((FuncRefn, Span), Vec<(Expr, Span)>),
     Block((Block, Span)),
 }
 
@@ -77,29 +78,64 @@ pub enum Binop {
     Or,
 }
 
-/// References the `bot-offset`th variable in the `depth` statically-enclosing stack frame.
-/// `top-offset` is the size of the topmost stack frame at the point of reference.
+/// References the `offset`th variable in the `depth`th statically-enclosing stack frame.
 ///
 /// (See https://en.wikipedia.org/wiki/Call_stack#Lexically_nested_routines)
 #[derive(Debug)]
 pub struct VarRefn {
     pub name: String,
-    // Filled out during scope checking
-    pub refn: Option<StackRefn>,
+    // Filled out during type checking
+    pub depth: Option<usize>,
+    pub offset: Option<isize>,
+}
+
+#[derive(Debug)]
+pub struct FuncRefn {
+    pub name: String,
+    // Filled out during type checking
+    pub depth: Option<usize>,
+    pub id: Option<FuncId>,
+}
+
+impl FuncRefn {
+    pub fn new(name: &str) -> FuncRefn {
+        FuncRefn {
+            name: name.to_owned(),
+            // Will be filled out during type checking
+            depth: None,
+            id: None,
+        }
+    }
+
+    pub fn unwrap_depth(&self) -> usize {
+        self.depth
+            .expect("FuncRefn.depth not set during type checking")
+    }
+
+    pub fn unwrap_id(&self) -> FuncId {
+        self.depth
+            .expect("FuncRefn.id not set during type checking")
+    }
 }
 
 impl VarRefn {
     pub fn new(name: &str) -> VarRefn {
         VarRefn {
             name: name.to_owned(),
-            // Will be filled out during scope checking
-            refn: None,
+            // Will be filled out during type checking
+            depth: None,
+            offset: None,
         }
     }
 
-    pub fn refn(&self) -> StackRefn {
-        self.refn
-            .expect("VarRefn.refn not set during scope checking")
+    pub fn unwrap_depth(&self) -> usize {
+        self.depth
+            .expect("VarRefn.depth not set during type checking")
+    }
+
+    pub fn unwrap_offset(&self) -> isize {
+        self.offset
+            .expect("VarRefn.offset not set during type checking")
     }
 }
 

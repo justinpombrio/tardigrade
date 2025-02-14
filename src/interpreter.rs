@@ -1,22 +1,28 @@
-use crate::ast::{self, Block, Expr, LetStmt, Span, Value};
+use crate::ast::{self, Block, Expr, FuncStmt, LetStmt, Span, Value};
 use crate::error::Error;
 use crate::stack::Stack;
 use panfix::Source;
 
 pub struct Interpreter<'s> {
     source: &'s Source,
+    funcs: &'s Vec<FuncStmt>,
     stack: Stack<Value<'s>>,
 }
 
 impl<'s> Interpreter<'s> {
-    pub fn new(source: &'s Source) -> Interpreter<'s> {
+    pub fn new(source: &'s Source, funcs: &'s Vec<FuncStmt>) -> Interpreter<'s> {
         Interpreter {
             source,
+            funcs,
             stack: Stack::new(),
         }
     }
 
-    pub fn interp_block(&mut self, block: &'s (Block, Span)) -> Result<Value<'s>, Error<'s>> {
+    pub fn interp_prog(&mut self, block: &'s (Block, Span)) -> Result<Value<'s>, Error<'s>> {
+        self.interp_block(block)
+    }
+
+    fn interp_block(&mut self, block: &'s (Block, Span)) -> Result<Value<'s>, Error<'s>> {
         use ast::Stmt::*;
 
         let start_of_block = self.stack.start_block();
@@ -42,13 +48,17 @@ impl<'s> Interpreter<'s> {
 
     /// Interpret the expression, producing either a result or a runtime Error. `expr` must be from
     /// the `Source` that this interpreter was constructed with.
-    pub fn interp_expr(&mut self, expr: &'s (Expr, Span)) -> Result<Value<'s>, Error<'s>> {
+    fn interp_expr(&mut self, expr: &'s (Expr, Span)) -> Result<Value<'s>, Error<'s>> {
         use ast::Binop::*;
         use ast::Unop::*;
         use Expr::*;
 
         match &expr.0 {
-            Var(var_refn) => Ok(self.stack.lookup(var_refn.refn()).clone()),
+            Var(var_refn) => {
+                let depth = var_refn.unwrap_depth();
+                let offset = var_refn.unwrap_offset();
+                Ok(self.stack.lookup(depth, offset).clone())
+            }
             Unit => Ok(Value::unit()),
             Bool(b) => Ok(Value::bool(*b)),
             Int(n) => Ok(Value::int(*n)),
@@ -82,14 +92,13 @@ impl<'s> Interpreter<'s> {
                     self.interp_expr(e_else)
                 }
             }
-            Apply(var_refn, args) => {
-                let func = self.stack.lookup(var_refn.0.refn()).clone();
-                let func = func.unwrap_func_ptr();
+            Apply(func_refn, args) => {
+                let func = &self.funcs[func_refn.0.unwrap_id()];
                 for arg in args {
                     let arg_val = self.interp_expr(arg)?;
                     self.stack.push(arg_val);
                 }
-                self.stack.start_frame(var_refn.0.refn());
+                self.stack.start_frame(func_refn.0.unwrap_depth());
                 let result = self.interp_block(&func.body)?;
                 self.stack.end_frame(func.params.len());
                 Ok(result)

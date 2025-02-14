@@ -3,17 +3,16 @@ mod error;
 mod format;
 mod grammar;
 mod interpreter;
+mod logger;
 mod parser;
-mod scope_checker;
 mod stack;
 mod type_checker;
 
-use ast::{Block, Span, Value};
+use ast::{Block, FuncStmt, Span, Value};
 use error::Error;
 use interpreter::Interpreter;
 use panfix::Source;
 use parser::Parser;
-use scope_checker::ScopeChecker;
 use std::io;
 use std::path::Path;
 use type_checker::{Type, TypeChecker};
@@ -55,29 +54,40 @@ pub struct Ast<'s> {
     block: (Block, Span),
 }
 
+pub struct TypeCheckedAst<'s> {
+    source: &'s Source,
+    block: (Block, Span),
+    functions: Vec<FuncStmt>,
+}
+
 impl<'s> Ast<'s> {
     /// Very naive pretty printing. Liable to put way too much on one line.
     pub fn format(&self) -> String {
         format!("{}", &self.block.0)
     }
 
-    pub fn scope_check(&mut self) -> Result<(), Error<'s>> {
-        let mut scope_checker = ScopeChecker::new(self.source);
-        scope_checker.resolve_block(&mut self.block)?;
-        scope_checker.finish();
-        Ok(())
-    }
-
-    pub fn type_check(&self) -> Result<Type, Error<'s>> {
+    pub fn type_check(mut self) -> Result<(Type, TypeCheckedAst<'s>), Error<'s>> {
         let mut type_checker = TypeChecker::new(self.source);
-        let ty = type_checker.check_block(&self.block)?;
-        type_checker.finish();
-        Ok(ty)
+        let ty = type_checker.check_prog(&mut self.block)?;
+        let functions = type_checker.finish();
+        let ast = TypeCheckedAst {
+            source: self.source,
+            block: self.block,
+            functions,
+        };
+        Ok((ty, ast))
+    }
+}
+
+impl<'s> TypeCheckedAst<'s> {
+    /// Very naive pretty printing. Liable to put way too much on one line.
+    pub fn format(&self) -> String {
+        format!("{}", &self.block.0)
     }
 
     pub fn interpret(&'s self) -> Result<Value<'s>, Error<'s>> {
-        let mut interpreter = Interpreter::new(self.source);
-        let value = interpreter.interp_block(&self.block)?;
+        let mut interpreter = Interpreter::new(self.source, &self.functions);
+        let value = interpreter.interp_prog(&self.block)?;
         interpreter.finish();
         Ok(value)
     }

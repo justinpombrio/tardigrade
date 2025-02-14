@@ -1,4 +1,4 @@
-use crate::ast::{Block, Expr, FuncStmt, LetStmt, Param, Span, Stmt, Var, VarRefn};
+use crate::ast::{Block, Expr, FuncRefn, FuncStmt, LetStmt, Param, Span, Stmt, Var, VarRefn};
 use crate::error::Error;
 use crate::grammar::{construct_grammar, ExprToken, StmtToken, Token, TypeToken, ValueToken};
 use crate::type_checker::Type;
@@ -124,9 +124,9 @@ impl Parser {
         Ok(args)
     }
 
-    fn parse_var_refn<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<(VarRefn, Span), Error<'s>> {
+    fn parse_func_refn<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<(FuncRefn, Span), Error<'s>> {
         match self.token(v) {
-            Token::Expr(ExprToken::Var) => Ok((VarRefn::new(v.source()), v.span())),
+            Token::Expr(ExprToken::Var) => Ok((FuncRefn::new(v.source()), v.span())),
             _ => Err(self.error_expected(v, "function name")),
         }
     }
@@ -179,7 +179,7 @@ impl Parser {
                 Ok(Expr::If(Box::new(e_if), Box::new(e_then), Box::new(e_else)))
             }
             ExprToken::Apply => {
-                let refn = self.parse_var_refn(v.child(0))?;
+                let refn = self.parse_func_refn(v.child(0))?;
                 let args = self.parse_args(v.child(1))?;
                 Ok(Expr::Apply(refn, args))
             }
