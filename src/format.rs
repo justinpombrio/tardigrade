@@ -2,34 +2,55 @@ use crate::ast::{Binop, Block, Expr, FuncStmt, LetStmt, Prec, Stmt, Unop};
 use crate::type_checker::Type;
 use std::fmt;
 
-const INDENT: u32 = 4;
+pub const INDENT_WIDTH: u32 = 2;
 
 /// Naive pretty printing.
-trait Format {
-    /// Formats `self`. `indent` is the number of spaces to prefix each new line with, and `prec`
-    /// is the precedence level of the containing expression, used for inserting parentheses.
-    fn format(&self, f: &mut fmt::Formatter, indent: u32, prec: Prec) -> fmt::Result;
+pub trait Format {
+    /// Formats `self`. `indentation` is the number of indentation levels to prefix each new line with,
+    /// and `prec` is the precedence level of the containing expression, used for inserting
+    /// parentheses.
+    fn format(&self, f: &mut impl fmt::Write, indentation: u32, prec: Prec) -> fmt::Result;
+}
+
+impl Format for str {
+    fn format(&self, f: &mut impl fmt::Write, indentation: u32, _prec: Prec) -> fmt::Result {
+        for (i, line) in self.lines().enumerate() {
+            if i != 0 {
+                newline(f, indentation)?;
+            }
+            write!(f, "{}", line)?;
+        }
+        Ok(())
+    }
+}
+
+impl Format for String {
+    fn format(&self, f: &mut impl fmt::Write, indentation: u32, prec: Prec) -> fmt::Result {
+        (self as &str).format(f, indentation, prec)
+    }
 }
 
 impl Format for Block {
-    fn format(&self, f: &mut fmt::Formatter, indent: u32, prec: Prec) -> fmt::Result {
-        for stmt in &self.0 {
-            stmt.0.format(f, indent, prec)?;
+    fn format(&self, f: &mut impl fmt::Write, indentation: u32, prec: Prec) -> fmt::Result {
+        for (i, stmt) in self.0.iter().enumerate() {
+            if i != 0 {
+                newline(f, indentation)?;
+            }
+            stmt.0.format(f, indentation, prec)?;
         }
         Ok(())
     }
 }
 
 impl Format for Stmt {
-    fn format(&self, f: &mut fmt::Formatter, indent: u32, prec: Prec) -> fmt::Result {
+    fn format(&self, f: &mut impl fmt::Write, indentation: u32, prec: Prec) -> fmt::Result {
         use Stmt::*;
 
         match self {
-            Expr(expr) => expr.0.format(f, indent, prec),
+            Expr(expr) => expr.0.format(f, indentation, prec),
             Let(LetStmt { var, definition }) => {
                 write!(f, "let {} = ", var.name)?;
-                definition.0.format(f, indent + INDENT, Prec::MAX)?;
-                writeln!(f)
+                definition.0.format(f, indentation + 1, Prec::MAX)
             }
             Func(FuncStmt {
                 var,
@@ -51,31 +72,32 @@ impl Format for Stmt {
                 }
                 write!(f, " =")?;
 
-                newline(f, indent + INDENT)?;
-                body.0.format(f, indent + INDENT, Prec::MAX)?;
+                newline(f, indentation + 1)?;
+                body.0.format(f, indentation + 1, Prec::MAX)?;
 
-                newline(f, indent)?;
-                writeln!(f, "end")
+                newline(f, indentation)?;
+                write!(f, "end")
             }
         }
     }
 }
 
 impl Format for Expr {
-    fn format(&self, f: &mut fmt::Formatter, indent: u32, prec: Prec) -> fmt::Result {
+    fn format(&self, f: &mut impl fmt::Write, indentation: u32, prec: Prec) -> fmt::Result {
+        use crate::ast::Literal::*;
         use Expr::*;
 
         match self {
             Var(v) => write!(f, "{}", v.name),
-            Unit => write!(f, "()"),
-            Bool(b) => write!(f, "{}", b),
-            Int(n) => write!(f, "{}", n),
+            Literal(Unit) => write!(f, "()"),
+            Literal(Bool(b)) => write!(f, "{}", b),
+            Literal(Int(n)) => write!(f, "{}", n),
             Unop(unop, x) => {
                 if unop.prec() > prec {
                     write!(f, "(")?;
                 }
                 write!(f, " {} ", unop)?;
-                x.0.format(f, indent, unop.prec())?;
+                x.0.format(f, indentation, unop.prec())?;
                 if unop.prec() > prec {
                     write!(f, ")")?;
                 }
@@ -85,9 +107,9 @@ impl Format for Expr {
                 if binop.prec() > prec {
                     write!(f, "(")?;
                 }
-                x.0.format(f, indent, binop.prec())?;
+                x.0.format(f, indentation, binop.prec())?;
                 write!(f, " {} ", binop)?;
-                y.0.format(f, indent, binop.prec())?;
+                y.0.format(f, indentation, binop.prec())?;
                 if binop.prec() > prec {
                     write!(f, ")")?;
                 }
@@ -95,45 +117,54 @@ impl Format for Expr {
             }
             If(e_if, e_then, e_else) => {
                 write!(f, "if ")?;
-                e_if.0.format(f, indent + INDENT, Prec::MAX)?;
+                e_if.0.format(f, indentation + 1, Prec::MAX)?;
                 write!(f, " then")?;
 
-                newline(f, indent + INDENT)?;
-                e_then.0.format(f, indent + INDENT, Prec::MAX)?;
+                newline(f, indentation + 1)?;
+                e_then.0.format(f, indentation + 1, Prec::MAX)?;
 
-                newline(f, indent)?;
+                newline(f, indentation)?;
                 write!(f, "else")?;
 
-                newline(f, indent + INDENT)?;
-                e_else.0.format(f, indent + INDENT, Prec::MAX)?;
+                newline(f, indentation + 1)?;
+                e_else.0.format(f, indentation + 1, Prec::MAX)?;
 
-                newline(f, indent)?;
+                newline(f, indentation)?;
                 write!(f, "end")
             }
             Apply(func, args) => {
                 write!(f, "{}(", func.0.name)?;
                 let mut args_iter = args.iter();
                 if let Some(first_arg) = args_iter.next() {
-                    first_arg.0.format(f, indent, Prec::MAX)?;
+                    first_arg.0.format(f, indentation, Prec::MAX)?;
                 }
                 for arg in args_iter {
                     write!(f, ", ")?;
-                    arg.0.format(f, indent, Prec::MAX)?;
+                    arg.0.format(f, indentation, Prec::MAX)?;
                 }
                 write!(f, ")")
             }
             Block(block) => {
                 writeln!(f, "block")?;
-                block.0.format(f, indent + INDENT, prec)?;
+                block.0.format(f, indentation + 1, prec)?;
                 writeln!(f, "end")
             }
         }
     }
 }
 
-fn newline(f: &mut fmt::Formatter, indent: u32) -> fmt::Result {
+fn indent(f: &mut impl fmt::Write, indentation: u32) -> fmt::Result {
+    write!(
+        f,
+        "{:indent$}",
+        "",
+        indent = (indentation * INDENT_WIDTH) as usize
+    )
+}
+
+fn newline(f: &mut impl fmt::Write, indentation: u32) -> fmt::Result {
     writeln!(f)?;
-    write!(f, "{:indent$}", "", indent = indent as usize)
+    indent(f, indentation)
 }
 
 impl fmt::Display for Unop {
@@ -164,17 +195,5 @@ impl fmt::Display for Binop {
             And => write!(f, "and"),
             Or => write!(f, "or"),
         }
-    }
-}
-
-impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.format(f, 0, Prec::MAX)
-    }
-}
-
-impl fmt::Display for Block {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.format(f, 0, Prec::MAX)
     }
 }

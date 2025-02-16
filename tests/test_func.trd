@@ -23,7 +23,7 @@ TEST nested_funcs
     func outerf(shadowed: Int) -> Int =
         let y = 10 * outer + shadowed
         func innerf(shadowed: Int, arg: Int) -> Int =
-            100 * outer + shadowed * arg + y
+            10 * outer + shadowed * arg + y
         end
         innerf(y, 7)
     end

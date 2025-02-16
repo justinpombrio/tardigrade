@@ -1,4 +1,6 @@
-use crate::ast::{Block, Expr, FuncRefn, FuncStmt, LetStmt, Param, Span, Stmt, Var, VarRefn};
+use crate::ast::{
+    Block, Expr, FuncRefn, FuncStmt, LetStmt, Literal, Param, Span, Stmt, Var, VarRefn,
+};
 use crate::error::Error;
 use crate::grammar::{construct_grammar, ExprToken, StmtToken, Token, TypeToken, ValueToken};
 use crate::type_checker::Type;
@@ -153,11 +155,11 @@ impl Parser {
 
     fn parse_expr<'s>(&self, v: Visitor<'s, '_, '_>, token: ExprToken) -> Result<Expr, Error<'s>> {
         match token {
-            ExprToken::Value(ValueToken::Unit) => Ok(Expr::Unit),
-            ExprToken::Value(ValueToken::True) => Ok(Expr::Bool(true)),
-            ExprToken::Value(ValueToken::False) => Ok(Expr::Bool(false)),
+            ExprToken::Value(ValueToken::Unit) => Ok(Expr::Literal(Literal::Unit)),
+            ExprToken::Value(ValueToken::True) => Ok(Expr::Literal(Literal::Bool(true))),
+            ExprToken::Value(ValueToken::False) => Ok(Expr::Literal(Literal::Bool(false))),
             ExprToken::Value(ValueToken::Int) => match v.source().parse::<i32>() {
-                Ok(n) => Ok(Expr::Int(n)),
+                Ok(n) => Ok(Expr::Literal(Literal::Int(n))),
                 Err(err) => {
                     Err(self.error(v, "invalid int", &format!("Invalid integer: '{}'", err)))
                 }

@@ -10,9 +10,9 @@ TEST fmt if
     if true and false then 1 + 2 else 3*4 end
 EXPECT format
     if true and false then
-        1 + 2
+      1 + 2
     else
-        3 * 4
+      3 * 4
     end
 END
 

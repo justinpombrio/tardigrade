@@ -1,7 +1,9 @@
 use std::fs;
 use std::io;
 use std::mem;
-use tardigrade::Tardigrade;
+use tardigrade::{log, span, Format, Logger, Prec, Tardigrade, Verbosity};
+
+const VERBOSITY: Verbosity = Verbosity::Info;
 
 const TEST_DIR: &str = "tests/";
 const TEST_EXT: &str = "trd";
@@ -9,11 +11,15 @@ const INDENT: &str = "    ";
 
 /// A single test case (TEST/EXPECT/END in the test files).
 struct TestCase {
-    filename: String,
     name: String,
     source: String,
     operation: Operation,
     expected_output: String,
+}
+
+struct TestCaseGroup {
+    filename: String,
+    test_cases: Vec<TestCase>,
 }
 
 /// What to do with the test case's source code.
@@ -25,35 +31,53 @@ enum Operation {
 
 #[test]
 fn run_tests() {
+    let mut logger = Logger::new(VERBOSITY);
+
     let test_files = read_test_files().unwrap();
-    let mut test_cases = Vec::new();
+    let mut test_case_groups = Vec::new();
     for (filename, contents) in test_files {
-        test_cases.append(&mut parse_test_cases(filename, contents));
+        test_case_groups.push(parse_test_cases(filename, contents));
     }
 
-    for test in test_cases {
-        eprintln!("TEST {} in {} ...", test.name, test.filename);
-        let tardigrade = Tardigrade::new(&test.name, test.source.clone());
-        let actual_output = match test.operation {
-            Operation::Format => indent(fmt(&tardigrade)),
-            Operation::Run => indent(run(&tardigrade)),
-        };
-        if test.expected_output == actual_output {
-            eprintln!("  ok");
-        } else {
-            eprintln!("In {}:", test.filename);
-            eprintln!("TEST {}", test.name);
-            eprintln!("{}", test.source);
-            match test.operation {
-                Operation::Format => eprintln!("EXPECT format"),
-                Operation::Run => eprintln!("EXPECT"),
+    for group in test_case_groups {
+        span!(logger, Info, "file", ("{}", group.filename), {
+            for test in group.test_cases {
+                span!(logger, Info, "test", ("{}", test.name), {
+                    let tardigrade = Tardigrade::new(&test.name, test.source.clone());
+                    let actual_output = match test.operation {
+                        Operation::Format => indent(fmt(&tardigrade)),
+                        Operation::Run => indent(run(&tardigrade, &mut logger)),
+                    };
+                    if test.expected_output == actual_output {
+                        log!(logger, Info, "pass");
+                    } else {
+                        log!(
+                            logger,
+                            Required,
+                            "TEST",
+                            ("{} in {}", test.name, group.filename)
+                        );
+                        logger.start_span();
+                        log!(logger, Required, test.source);
+                        logger.end_span();
+                        match test.operation {
+                            Operation::Format => log!(logger, Required, "EXPECT format"),
+                            Operation::Run => log!(logger, Required, "EXPECT"),
+                        }
+                        logger.start_span();
+                        log!(logger, Required, test.expected_output);
+                        logger.end_span();
+                        log!(logger, Required, "ACTUAL");
+                        logger.start_span();
+                        log!(logger, Required, actual_output);
+                        logger.end_span();
+                        log!(logger, Required, "END");
+
+                        panic!("Test case failed.");
+                    }
+                })
             }
-            eprintln!("{}", test.expected_output);
-            eprintln!("ACTUAL");
-            eprintln!("{}", actual_output);
-            eprintln!("END");
-            panic!("Test case failed.");
-        }
+        })
     }
 }
 
@@ -78,7 +102,7 @@ fn read_test_files() -> io::Result<Vec<(String, String)>> {
 }
 
 /// Parse the test cases from a single file. Panic on errors.
-fn parse_test_cases(filename: String, input: String) -> Vec<TestCase> {
+fn parse_test_cases(filename: String, input: String) -> TestCaseGroup {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum ParseState {
         Initial,
@@ -134,7 +158,6 @@ fn parse_test_cases(filename: String, input: String) -> Vec<TestCase> {
             ReadingOutput => {
                 if line.starts_with("END") {
                     test_cases.push(TestCase {
-                        filename: filename.clone(),
                         name: mem::take(&mut test_name),
                         source: mem::take(&mut source),
                         operation,
@@ -157,7 +180,10 @@ fn parse_test_cases(filename: String, input: String) -> Vec<TestCase> {
         panic!("Test cases: missing final 'END'");
     }
 
-    test_cases
+    TestCaseGroup {
+        filename,
+        test_cases,
+    }
 }
 
 /// Prefix all lines of `text` with `INDENT`.
@@ -175,12 +201,12 @@ fn indent(text: String) -> String {
 
 /// Run Tardigrade source code, and print the return value if it ran successfully, or the error
 /// message if it didn't.
-fn run(tardigrade: &Tardigrade) -> String {
+fn run(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
     match tardigrade.parse() {
         Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
-        Ok(ast) => match ast.type_check() {
+        Ok(ast) => match ast.type_check(logger) {
             Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
-            Ok((_, ast)) => match ast.interpret() {
+            Ok((_, ast)) => match ast.interpret(logger) {
                 Err(runtime_err) => {
                     format!("{}", runtime_err.display_with_color_override(false))
                 }
@@ -194,6 +220,10 @@ fn run(tardigrade: &Tardigrade) -> String {
 fn fmt(tardigrade: &Tardigrade) -> String {
     match tardigrade.parse() {
         Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
-        Ok(ast) => ast.format(),
+        Ok(ast) => {
+            let mut buffer = String::new();
+            ast.format(&mut buffer, 0, Prec::MAX).unwrap();
+            buffer
+        }
     }
 }
