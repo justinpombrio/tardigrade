@@ -47,9 +47,7 @@ pub struct FuncStmt {
 #[derive(Debug)]
 pub enum Expr {
     Var(VarRefn),
-    Unit,
-    Bool(bool),
-    Int(i32),
+    Literal(Literal),
     Unop(Unop, Box<(Expr, Span)>),
     Binop(Binop, Box<(Expr, Span)>, Box<(Expr, Span)>),
     If(Box<(Expr, Span)>, Box<(Expr, Span)>, Box<(Expr, Span)>),
@@ -113,8 +111,7 @@ impl FuncRefn {
     }
 
     pub fn unwrap_id(&self) -> FuncId {
-        self.depth
-            .expect("FuncRefn.id not set during type checking")
+        self.id.expect("FuncRefn.id not set during type checking")
     }
 }
 
@@ -184,37 +181,39 @@ impl Unop {
  * Values *
  **********/
 
+#[derive(Debug)]
+pub enum Literal {
+    Unit,
+    Bool(bool),
+    Int(i32),
+}
+
 /// A runtime value. The Value knows its type, but it will not tell you because:
 ///
 /// - A full implementation would compile to assembly and not know the underlying type, except as
 ///   revealed by the type checker.
 /// - The value does store its own type to notice at runtime if the typechecker messed up.
 #[derive(Debug, Clone)]
-pub struct Value<'s>(ValueCase<'s>);
+pub struct Value(ValueCase);
 
 #[derive(Debug, Clone)]
-enum ValueCase<'s> {
+enum ValueCase {
     Unit,
     Bool(bool),
     Int(i32),
-    FuncPtr(&'s FuncStmt),
 }
 
-impl<'s> Value<'s> {
-    pub fn unit() -> Value<'s> {
+impl Value {
+    pub fn unit() -> Value {
         Value(ValueCase::Unit)
     }
 
-    pub fn bool(b: bool) -> Value<'s> {
+    pub fn bool(b: bool) -> Value {
         Value(ValueCase::Bool(b))
     }
 
-    pub fn int(int: i32) -> Value<'s> {
+    pub fn int(int: i32) -> Value {
         Value(ValueCase::Int(int))
-    }
-
-    pub fn func_ptr(func: &'s FuncStmt) -> Value<'s> {
-        Value(ValueCase::FuncPtr(func))
     }
 
     pub fn unwrap_unit(self) {
@@ -239,14 +238,6 @@ impl<'s> Value<'s> {
         }
     }
 
-    pub fn unwrap_func_ptr(self) -> &'s FuncStmt {
-        if let ValueCase::FuncPtr(func) = self.0 {
-            func
-        } else {
-            self.type_mismatch(None)
-        }
-    }
-
     fn type_mismatch(self, expected: Option<&Type>) -> ! {
         let actual = match self.0.type_of() {
             None => "function".to_owned(),
@@ -263,7 +254,7 @@ impl<'s> Value<'s> {
     }
 }
 
-impl ValueCase<'_> {
+impl ValueCase {
     fn type_of(self) -> Option<Type> {
         use ValueCase::*;
 
@@ -271,12 +262,11 @@ impl ValueCase<'_> {
             Unit => Some(Type::Unit),
             Bool(_) => Some(Type::Bool),
             Int(_) => Some(Type::Int),
-            FuncPtr(_) => None,
         }
     }
 }
 
-impl fmt::Display for Value<'_> {
+impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use ValueCase::*;
 
@@ -284,7 +274,18 @@ impl fmt::Display for Value<'_> {
             Unit => write!(f, "()"),
             Bool(b) => write!(f, "{}", b),
             Int(n) => write!(f, "{}", n),
-            FuncPtr(func) => write!(f, "func {}", func.var.name),
+        }
+    }
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use Literal::*;
+
+        match self {
+            Unit => write!(f, "()"),
+            Bool(b) => write!(f, "{}", b),
+            Int(n) => write!(f, "{}", n),
         }
     }
 }

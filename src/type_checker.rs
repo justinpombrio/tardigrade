@@ -1,13 +1,18 @@
-use crate::ast::{self, Block, Expr, FuncId, FuncRefn, FuncStmt, LetStmt, Span, Stmt, VarRefn};
+use crate::ast::{
+    self, Block, Expr, FuncId, FuncRefn, FuncStmt, LetStmt, Literal, Span, Stmt, VarRefn,
+};
 use crate::error::Error;
+use crate::logger::{Logger, Verbosity};
+use crate::{log, span};
 use panfix::Source;
 use std::fmt;
 use std::ops::Deref;
 
-pub struct TypeChecker<'s> {
+pub struct TypeChecker<'s, 'l> {
     source: &'s Source,
     stack: Vec<StackFrame>,
-    funcs: Vec<FuncStmt>,
+    funcs: Vec<Option<FuncStmt>>,
+    logger: &'l mut Logger,
 }
 
 #[derive(Debug)]
@@ -32,12 +37,13 @@ pub struct FuncType {
     return_type: Box<Type>,
 }
 
-impl<'s> TypeChecker<'s> {
-    pub fn new(source: &'s Source) -> TypeChecker<'s> {
+impl<'s, 'l> TypeChecker<'s, 'l> {
+    pub fn new(source: &'s Source, logger: &'l mut Logger) -> TypeChecker<'s, 'l> {
         TypeChecker {
             source,
             stack: Vec::new(),
             funcs: Vec::new(),
+            logger,
         }
     }
 
@@ -49,6 +55,15 @@ impl<'s> TypeChecker<'s> {
     }
 
     fn check_block(&mut self, block: &mut (Block, Span)) -> Result<Type, Error<'s>> {
+        span!(self.logger, Trace, "block", {
+            let ty = self.check_block_impl(block)?;
+            log!(self.logger, Trace, block.0);
+            log!(self.logger, Trace, "type", ("{}", ty));
+            Ok(ty)
+        })
+    }
+
+    fn check_block_impl(&mut self, block: &mut (Block, Span)) -> Result<Type, Error<'s>> {
         let mut result = Type::Unit;
         self.frame_mut().start_block();
         let mut remaining_stmts = Vec::new();
@@ -92,16 +107,33 @@ impl<'s> TypeChecker<'s> {
     }
 
     fn check_funcs(&mut self, funcs: Vec<FuncStmt>) -> Result<(), Error<'s>> {
-        // 1. Push the function names so that we can look up references to them.
-        //    The id of each function must match its index in `self.funcs` below!
+        // A function's id is its index into `self.funcs`.
+        // Assigning these ids is tricky because other functions may be given ids while we're type
+        // checking the current function.
+        let mut func_ids = Vec::new();
+
         // TODO: check that function names are disjoint
-        for (i, func) in funcs.iter().enumerate() {
-            let id = self.funcs.len() + i;
+        for func in &funcs {
+            let id = self.funcs.len();
+            func_ids.push(id);
+            self.funcs.push(None);
             let ty = type_of_function(func);
             self.frame_mut().push_func(&func.var.name, id, ty);
         }
-        // 2. Type check each function in turn, then push it onto the global list of funcs.
-        for mut func in funcs {
+        for (id, func) in func_ids.into_iter().zip(funcs.into_iter()) {
+            self.check_func_stmt(func, id)?;
+        }
+        Ok(())
+    }
+
+    fn check_let_stmt(&mut self, let_stmt: &mut LetStmt) -> Result<(), Error<'s>> {
+        span!(self.logger, Trace, "let", ("{}", let_stmt.var.name), {
+            self.check_let_stmt_impl(let_stmt)
+        })
+    }
+
+    fn check_func_stmt(&mut self, mut func: FuncStmt, id: FuncId) -> Result<(), Error<'s>> {
+        span!(self.logger, Trace, "func", ("{}", func.var.name), {
             self.frame_mut().start_block();
             // TODO: check that function params are disjoint
             for param in &mut func.params {
@@ -111,12 +143,13 @@ impl<'s> TypeChecker<'s> {
             self.expect_block(&mut func.body, &func.return_type)?;
             self.stack.pop();
             self.frame_mut().end_block();
-            self.funcs.push(func);
-        }
-        Ok(())
+            self.funcs[id] = Some(func);
+            log!(self.logger, Trace, "id", ("{}", id));
+            Ok(())
+        })
     }
 
-    fn check_let_stmt(&mut self, let_stmt: &mut LetStmt) -> Result<(), Error<'s>> {
+    fn check_let_stmt_impl(&mut self, let_stmt: &mut LetStmt) -> Result<(), Error<'s>> {
         let ty = self.check_expr(&mut let_stmt.definition)?;
         self.frame_mut().push_var(&let_stmt.var.name, ty);
         Ok(())
@@ -125,15 +158,46 @@ impl<'s> TypeChecker<'s> {
     /// Type check the given expression, which must be from the `Source` that this `TypeChecker`
     /// was cosntructed from.
     pub fn check_expr(&mut self, expr: &mut (Expr, Span)) -> Result<Type, Error<'s>> {
+        if self.logger.enabled(Verbosity::Trace) {
+            if let (Expr::Literal(literal), _) = expr {
+                let ty = self.check_literal(literal);
+                log!(self.logger, Trace, "literal", ("{} : {}", literal, ty));
+                Ok(ty)
+            } else if let (Expr::Var(var), span) = expr {
+                let ty = self.check_var(var, *span)?;
+                log!(
+                    self.logger,
+                    Trace,
+                    "var",
+                    (
+                        "{} depth:{} offset:{}",
+                        var.name,
+                        var.unwrap_depth(),
+                        var.unwrap_offset()
+                    )
+                );
+                Ok(ty)
+            } else {
+                span!(self.logger, Trace, "expr", {
+                    let ty = self.check_expr_impl(expr)?;
+                    log!(self.logger, Trace, expr.0);
+                    log!(self.logger, Trace, "type", ("{}", ty));
+                    Ok(ty)
+                })
+            }
+        } else {
+            self.check_expr_impl(expr)
+        }
+    }
+
+    pub fn check_expr_impl(&mut self, expr: &mut (Expr, Span)) -> Result<Type, Error<'s>> {
         use ast::Binop::*;
         use ast::Unop::*;
         use Expr::*;
 
         match &mut expr.0 {
-            Var(var_refn) => self.check_var_refn(var_refn, expr.1).cloned(),
-            Unit => Ok(Type::Unit),
-            Bool(_) => Ok(Type::Bool),
-            Int(_) => Ok(Type::Int),
+            Var(var_refn) => self.check_var(var_refn, expr.1),
+            Literal(literal) => Ok(self.check_literal(literal)),
             Unop(Not, x) => {
                 self.expect_expr(x, &Type::Bool)?;
                 Ok(Type::Bool)
@@ -183,11 +247,24 @@ impl<'s> TypeChecker<'s> {
         }
     }
 
+    pub fn check_literal(&mut self, literal: &Literal) -> Type {
+        use Literal::*;
+
+        match literal {
+            Unit => Type::Unit,
+            Bool(_) => Type::Bool,
+            Int(_) => Type::Int,
+        }
+    }
+
     pub fn finish(self) -> Vec<FuncStmt> {
         if !self.stack.is_empty() {
             panic!("Type Checking: leftover stack frame\n{:?}", self.stack);
         }
         self.funcs
+            .into_iter()
+            .map(|func| func.unwrap())
+            .collect::<Vec<_>>()
     }
 
     fn frame_mut(&mut self) -> &mut StackFrame {
@@ -222,8 +299,24 @@ impl<'s> TypeChecker<'s> {
         }
     }
 
-    fn check_func_refn(
-        &self,
+    fn check_func_refn(&mut self, func: &mut FuncRefn, span: Span) -> Result<FuncType, Error<'s>> {
+        let ty = self.check_func_refn_impl(func, span)?.clone();
+        log!(
+            self.logger,
+            Trace,
+            "func",
+            (
+                "{} id:{} depth:{}",
+                func.name,
+                func.unwrap_id(),
+                func.unwrap_depth()
+            )
+        );
+        Ok(ty)
+    }
+
+    fn check_func_refn_impl(
+        &mut self,
         func_refn: &mut FuncRefn,
         span: Span,
     ) -> Result<&FuncType, Error<'s>> {
@@ -243,7 +336,7 @@ impl<'s> TypeChecker<'s> {
         ))
     }
 
-    fn check_var_refn(&self, var_refn: &mut VarRefn, span: Span) -> Result<&Type, Error<'s>> {
+    fn check_var(&mut self, var_refn: &mut VarRefn, span: Span) -> Result<Type, Error<'s>> {
         for (depth, frame) in self.stack.iter().rev().enumerate() {
             if let Some((offset, ty)) = frame.lookup_var(&var_refn.name) {
                 if offset < 0 {
@@ -252,7 +345,7 @@ impl<'s> TypeChecker<'s> {
                     var_refn.depth = Some(depth);
                 }
                 var_refn.offset = Some(offset);
-                return Ok(ty);
+                return Ok(ty.clone());
             }
         }
         Err(Error::new(
@@ -347,7 +440,7 @@ impl fmt::Display for StackFrame {
     }
 }
 
-impl fmt::Display for TypeChecker<'_> {
+impl fmt::Display for TypeChecker<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "stack")?;
         for frame in &self.stack {
@@ -356,7 +449,11 @@ impl fmt::Display for TypeChecker<'_> {
         writeln!(f, "end")?;
         writeln!(f, "functions")?;
         for func in &self.funcs {
-            writeln!(f, "  {}", func.var.name)?;
+            if let Some(func) = func {
+                writeln!(f, "  {}", func.var.name)?;
+            } else {
+                writeln!(f, "  None")?;
+            }
         }
         writeln!(f, "end")
     }
@@ -390,7 +487,7 @@ impl StackFrame {
                 return Some((-(i as isize) - 3, ty));
             }
         }
-        for (i, (var, ty)) in self.vars.iter().enumerate() {
+        for (i, (var, ty)) in self.vars.iter().enumerate().rev() {
             if *var == var_name {
                 return Some((i as isize, ty));
             }

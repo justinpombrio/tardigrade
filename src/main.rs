@@ -1,6 +1,6 @@
 use std::io;
 use std::path::PathBuf;
-use tardigrade::Tardigrade;
+use tardigrade::{log, Logger, Tardigrade, Verbosity};
 
 /// Tardigrade: an experimental programming language
 #[derive(clap::Parser, Debug)]
@@ -11,6 +11,12 @@ struct CommandLineArgs {
     /// Whether to format the source file instead of running it.
     #[arg(short, long)]
     format: bool,
+    /// Whether to be extra verbose when logging. Takes priority over --quiet.
+    #[arg(short, long)]
+    verbose: bool,
+    /// Whether to be extra quiet when logging.
+    #[arg(short, long)]
+    quiet: bool,
 }
 
 fn prompt(buffer: &mut String) -> Result<&str, io::Error> {
@@ -26,12 +32,12 @@ fn prompt(buffer: &mut String) -> Result<&str, io::Error> {
     Ok(buffer.trim())
 }
 
-fn run(tardigrade: &Tardigrade) {
+fn run(tardigrade: &Tardigrade, logger: &mut Logger) {
     match tardigrade.parse() {
         Err(parse_err) => println!("{}", parse_err),
-        Ok(ast) => match ast.type_check() {
+        Ok(ast) => match ast.type_check(logger) {
             Err(type_err) => println!("{}", type_err),
-            Ok((_, ast)) => match ast.interpret() {
+            Ok((_, ast)) => match ast.interpret(logger) {
                 Err(runtime_err) => println!("{}", runtime_err),
                 Ok(value) => println!("{}", value),
             },
@@ -39,14 +45,14 @@ fn run(tardigrade: &Tardigrade) {
     }
 }
 
-fn fmt(tardigrade: &Tardigrade) {
+fn fmt(tardigrade: &Tardigrade, logger: &mut Logger) {
     match tardigrade.parse() {
         Err(parse_err) => println!("{}", parse_err),
-        Ok(ast) => println!("{}", ast.format()),
+        Ok(ast) => log!(logger, Required, ast),
     }
 }
 
-fn repl() {
+fn repl(logger: &mut Logger) {
     let mut input_buffer = String::new();
     loop {
         let source = prompt(&mut input_buffer).unwrap();
@@ -54,22 +60,30 @@ fn repl() {
             break;
         }
         let tardigrade = Tardigrade::new("[stdin]", source.to_owned());
-        run(&tardigrade);
+        run(&tardigrade, logger);
     }
     println!("Goodbye!");
 }
 
 fn main() {
     let args = <CommandLineArgs as clap::Parser>::parse();
+    let verbosity = if args.verbose {
+        Verbosity::Trace
+    } else if args.quiet {
+        Verbosity::Required
+    } else {
+        Verbosity::Info
+    };
+    let mut logger = Logger::new(verbosity);
 
     if let Some(path) = args.path {
         let tardigrade = Tardigrade::open(path).unwrap();
         if args.format {
-            fmt(&tardigrade);
+            fmt(&tardigrade, &mut logger);
         } else {
-            run(&tardigrade);
+            run(&tardigrade, &mut logger);
         }
     } else {
-        repl();
+        repl(&mut logger);
     }
 }
