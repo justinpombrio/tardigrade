@@ -1,10 +1,15 @@
+//! Parse an AST out of a token tree. Error on redundant nested comptimes.
+
 use crate::ast::{
-    Block, Expr, FuncRefn, FuncStmt, LetStmt, Literal, Param, Span, Stmt, Var, VarRefn,
+    ApplyExpr, Block, BlockExpr, Expr, FuncRefn, FuncStmt, IfExpr, LetStmt, Literal, Param, Span,
+    Stmt, Time, Var, VarRefn,
 };
 use crate::error::Error;
-use crate::grammar::{construct_grammar, ExprToken, StmtToken, Token, TypeToken, ValueToken};
+use crate::grammar::{construct_grammar, ExprToken, LiteralToken, StmtToken, Token, TypeToken};
 use crate::type_checker::Type;
 use panfix::{Parser as PanfixParser, Source, Visitor};
+
+use Time::{Comptime, Runtime};
 
 pub struct Parser(PanfixParser);
 
@@ -15,29 +20,30 @@ impl Parser {
 
     pub fn parse<'s>(&self, source: &'s Source) -> Result<(Block, Span), Error<'s>> {
         let tree = self.0.parse(source)?;
-        self.parse_block_with_span(tree.visitor())
+        self.parse_block_with_span(tree.visitor(), Runtime)
     }
 
     fn parse_block_with_span<'s>(
         &self,
         v: Visitor<'s, '_, '_>,
+        time: Time,
     ) -> Result<(Block, Span), Error<'s>> {
-        let block = self.parse_block(v)?;
+        let block = self.parse_block(v, time)?;
         Ok((block, v.span()))
     }
 
-    fn parse_block<'s>(&self, mut v: Visitor<'s, '_, '_>) -> Result<Block, Error<'s>> {
+    fn parse_block<'s>(&self, mut v: Visitor<'s, '_, '_>, time: Time) -> Result<Block, Error<'s>> {
         let mut stmts = Vec::new();
         loop {
             let token = self.token(v);
             match token {
                 Token::Blank => break,
                 Token::Juxtapose => {
-                    stmts.push(self.parse_stmt_with_span(v.child(0))?);
+                    stmts.push(self.parse_stmt_with_span(v.child(0), time)?);
                     v = v.child(1);
                 }
                 Token::Stmt(_) | Token::Expr(_) => {
-                    stmts.push(self.parse_stmt_with_span(v)?);
+                    stmts.push(self.parse_stmt_with_span(v, time)?);
                     break;
                 }
                 _ => return Err(self.error_expected(v, "statement")),
@@ -46,41 +52,73 @@ impl Parser {
         Ok(Block(stmts))
     }
 
-    fn parse_stmt_with_span<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<(Stmt, Span), Error<'s>> {
+    fn parse_stmt_with_span<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        time: Time,
+    ) -> Result<(Stmt, Span), Error<'s>> {
         match self.token(v) {
             Token::Expr(token) => {
-                let expr = self.parse_expr(v, token)?;
+                let expr = self.parse_expr(v, token, time)?;
                 let span = v.span();
                 Ok((Stmt::Expr((expr, span)), span))
             }
             Token::Stmt(token) => {
-                let stmt = self.parse_stmt(v, token)?;
+                let stmt = self.parse_stmt(v, token, time)?;
                 Ok((stmt, v.span()))
             }
             _ => Err(self.error_expected(v, "expression")),
         }
     }
 
-    fn parse_stmt<'s>(&self, v: Visitor<'s, '_, '_>, token: StmtToken) -> Result<Stmt, Error<'s>> {
+    fn parse_stmt<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        token: StmtToken,
+        time: Time,
+    ) -> Result<Stmt, Error<'s>> {
         match token {
-            StmtToken::Let => {
-                let var = self.parse_var(v.child(0))?;
-                let definition = self.parse_expr_with_span(v.child(1))?;
-                Ok(Stmt::Let(LetStmt { var, definition }))
-            }
-            StmtToken::Func => {
-                let var = self.parse_var(v.child(0))?;
-                let params = self.parse_params(v.child(1))?;
-                let return_type = self.parse_return_type(v.child(2))?;
-                let body = self.parse_block_with_span(v.child(3))?;
-                Ok(Stmt::Func(FuncStmt {
-                    var,
-                    params,
-                    return_type,
-                    body,
-                }))
-            }
+            StmtToken::Let => Ok(Stmt::Let(self.parse_let(v, time, Runtime)?)),
+            StmtToken::LetCT => Ok(Stmt::Let(self.parse_let(v, time, Comptime)?)),
+            StmtToken::Func => Ok(Stmt::Func(self.parse_func(v, time, Runtime)?)),
+            StmtToken::FuncCT => Ok(Stmt::Func(self.parse_func(v, time, Comptime)?)),
         }
+    }
+
+    fn parse_let<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        time: Time,
+        let_time: Time,
+    ) -> Result<LetStmt, Error<'s>> {
+        let time = self.combine_times(v, time, let_time)?;
+        let var = self.parse_var(v.child(0))?;
+        let definition = self.parse_expr_with_span(v.child(1), time)?;
+        Ok(LetStmt {
+            var,
+            definition,
+            time: let_time,
+        })
+    }
+
+    fn parse_func<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        time: Time,
+        func_time: Time,
+    ) -> Result<FuncStmt, Error<'s>> {
+        let time = self.combine_times(v, time, func_time)?;
+        let var = self.parse_var(v.child(0))?;
+        let params = self.parse_params(v.child(1))?;
+        let return_type = self.parse_return_type(v.child(2))?;
+        let body = self.parse_block_with_span(v.child(3), time)?;
+        Ok(FuncStmt {
+            var,
+            params,
+            return_type,
+            body,
+            time: func_time,
+        })
     }
 
     fn parse_return_type<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<Type, Error<'s>> {
@@ -114,82 +152,180 @@ impl Parser {
         }
     }
 
-    fn parse_args<'s>(&self, mut v: Visitor<'s, '_, '_>) -> Result<Vec<(Expr, Span)>, Error<'s>> {
+    fn parse_args<'s>(
+        &self,
+        mut v: Visitor<'s, '_, '_>,
+        time: Time,
+    ) -> Result<Vec<(Expr, Span)>, Error<'s>> {
         let mut args = Vec::new();
         while self.token(v) == Token::Comma {
-            args.push(self.parse_expr_with_span(v.child(0))?);
+            args.push(self.parse_expr_with_span(v.child(0), time)?);
             v = v.child(1);
         }
         if self.token(v) != Token::Blank {
-            args.push(self.parse_expr_with_span(v)?);
+            args.push(self.parse_expr_with_span(v, time)?);
         }
         Ok(args)
     }
 
-    fn parse_func_refn<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<(FuncRefn, Span), Error<'s>> {
+    fn parse_refn<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        expected_msg: &str,
+        time: Time,
+    ) -> Result<(&'s str, Time), Error<'s>> {
         match self.token(v) {
-            Token::Expr(ExprToken::Var) => Ok((FuncRefn::new(v.source()), v.span())),
-            _ => Err(self.error_expected(v, "function name")),
+            Token::Expr(ExprToken::Var) => {
+                self.combine_times(v, time, Runtime)?;
+                Ok((v.source(), Runtime))
+            }
+            Token::Expr(ExprToken::VarCT) => {
+                self.combine_times(v, time, Comptime)?;
+                Ok((&v.source()[1..], Comptime))
+            }
+            _ => Err(self.error_expected(v, expected_msg)),
         }
     }
 
     fn parse_type<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<Type, Error<'s>> {
         match self.token(v) {
             // May need to distinguish the unit value from the unit type one day
-            Token::Expr(ExprToken::Value(ValueToken::Unit)) => Ok(Type::Unit),
+            Token::Expr(ExprToken::Literal(LiteralToken::Unit)) => Ok(Type::Unit),
             Token::Type(TypeToken::Bool) => Ok(Type::Bool),
             Token::Type(TypeToken::Int) => Ok(Type::Int),
             _ => Err(self.error_expected(v, "type")),
         }
     }
 
-    fn parse_expr_with_span<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<(Expr, Span), Error<'s>> {
+    fn parse_expr_with_span<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        time: Time,
+    ) -> Result<(Expr, Span), Error<'s>> {
         match self.token(v) {
             Token::Expr(token) => {
-                let expr = self.parse_expr(v, token)?;
+                let expr = self.parse_expr(v, token, time)?;
                 Ok((expr, v.span()))
             }
             _ => Err(self.error_expected(v, "expression")),
         }
     }
 
-    fn parse_expr<'s>(&self, v: Visitor<'s, '_, '_>, token: ExprToken) -> Result<Expr, Error<'s>> {
+    fn parse_expr<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        token: ExprToken,
+        time: Time,
+    ) -> Result<Expr, Error<'s>> {
         match token {
-            ExprToken::Value(ValueToken::Unit) => Ok(Expr::Literal(Literal::Unit)),
-            ExprToken::Value(ValueToken::True) => Ok(Expr::Literal(Literal::Bool(true))),
-            ExprToken::Value(ValueToken::False) => Ok(Expr::Literal(Literal::Bool(false))),
-            ExprToken::Value(ValueToken::Int) => match v.source().parse::<i32>() {
-                Ok(n) => Ok(Expr::Literal(Literal::Int(n))),
+            ExprToken::Literal(literal_tok) => {
+                let literal = self.parse_literal(v, literal_tok)?;
+                Ok(Expr::Literal(literal))
+            }
+            ExprToken::Var | ExprToken::VarCT => {
+                let (var_name, var_time) = self.parse_refn(v, "variable name", time)?;
+                Ok(Expr::Var(VarRefn::new(var_name, var_time)))
+            }
+            ExprToken::EUnop(unop) => {
+                let expr = self.parse_expr_with_span(v.child(0), time)?;
+                Ok(Expr::Unop(unop, Box::new(expr)))
+            }
+            ExprToken::EBinop(binop) => {
+                let left = self.parse_expr_with_span(v.child(0), time)?;
+                let right = self.parse_expr_with_span(v.child(1), time)?;
+                Ok(Expr::Binop(binop, Box::new(left), Box::new(right)))
+            }
+            ExprToken::If => {
+                let if_expr = self.parse_if_expr(v, time, Runtime)?;
+                Ok(Expr::If(if_expr))
+            }
+            ExprToken::IfCT => {
+                let if_expr = self.parse_if_expr(v, time, Comptime)?;
+                Ok(Expr::If(if_expr))
+            }
+            ExprToken::Apply => {
+                let apply_expr = self.parse_apply_expr(v, time)?;
+                Ok(Expr::Apply(apply_expr))
+            }
+            ExprToken::Block => {
+                let block = self.parse_block_expr(v, time, Runtime)?;
+                Ok(Expr::Block(block))
+            }
+            ExprToken::BlockCT => {
+                let block = self.parse_block_expr(v, time, Comptime)?;
+                Ok(Expr::Block(block))
+            }
+            ExprToken::Comptime => {
+                let time = self.combine_times(v, time, Comptime)?;
+                let expr = self.parse_expr_with_span(v.child(0), time)?;
+                Ok(Expr::ComptimeExpr(Box::new(expr)))
+            }
+        }
+    }
+
+    fn parse_literal<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        token: LiteralToken,
+    ) -> Result<Literal, Error<'s>> {
+        match token {
+            LiteralToken::Unit => Ok(Literal::Unit),
+            LiteralToken::True => Ok(Literal::Bool(true)),
+            LiteralToken::False => Ok(Literal::Bool(false)),
+            LiteralToken::Int => match v.source().parse::<i32>() {
+                Ok(n) => Ok(Literal::Int(n)),
                 Err(err) => {
                     Err(self.error(v, "invalid int", &format!("Invalid integer: '{}'", err)))
                 }
             },
-            ExprToken::Var => Ok(Expr::Var(VarRefn::new(v.source()))),
-            ExprToken::Unop(unop) => {
-                let expr = self.parse_expr_with_span(v.child(0))?;
-                Ok(Expr::Unop(unop, Box::new(expr)))
-            }
-            ExprToken::Binop(binop) => {
-                let left = self.parse_expr_with_span(v.child(0))?;
-                let right = self.parse_expr_with_span(v.child(1))?;
-                Ok(Expr::Binop(binop, Box::new(left), Box::new(right)))
-            }
-            ExprToken::If => {
-                let e_if = self.parse_expr_with_span(v.child(0))?;
-                let e_then = self.parse_expr_with_span(v.child(1))?;
-                let e_else = self.parse_expr_with_span(v.child(2))?;
-                Ok(Expr::If(Box::new(e_if), Box::new(e_then), Box::new(e_else)))
-            }
-            ExprToken::Apply => {
-                let refn = self.parse_func_refn(v.child(0))?;
-                let args = self.parse_args(v.child(1))?;
-                Ok(Expr::Apply(refn, args))
-            }
-            ExprToken::Block => {
-                let block = self.parse_block_with_span(v.child(0))?;
-                Ok(Expr::Block(block))
-            }
         }
+    }
+
+    fn parse_block_expr<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        time: Time,
+        block_time: Time,
+    ) -> Result<BlockExpr, Error<'s>> {
+        let time = self.combine_times(v, time, block_time)?;
+        let block = self.parse_block_with_span(v.child(0), time)?;
+        Ok(BlockExpr {
+            block: Box::new(block),
+            time: block_time,
+        })
+    }
+
+    fn parse_if_expr<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        time: Time,
+        if_time: Time,
+    ) -> Result<IfExpr, Error<'s>> {
+        let e_if = self.parse_expr_with_span(v.child(0), time + if_time)?;
+        let e_then = self.parse_expr_with_span(v.child(1), time)?;
+        let e_else = self.parse_expr_with_span(v.child(2), time)?;
+        Ok(IfExpr {
+            e_if: Box::new(e_if),
+            e_then: Box::new(e_then),
+            e_else: Box::new(e_else),
+            time: if_time,
+        })
+    }
+
+    fn parse_apply_expr<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        time: Time,
+    ) -> Result<ApplyExpr, Error<'s>> {
+        let (func_name, func_time) = self.parse_refn(v.child(0), "function name", time)?;
+        let func = FuncRefn::new(func_name);
+        let func_span = v.child(0).span();
+        let args = self.parse_args(v.child(1), time + func_time)?;
+        Ok(ApplyExpr {
+            func: (func, func_span),
+            args,
+            time: func_time,
+        })
     }
 
     fn parse_var<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<Var, Error<'s>> {
@@ -216,6 +352,27 @@ impl Parser {
                 )
                 .into())
         }
+    }
+
+    fn combine_times<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        outer_time: Time,
+        inner_time: Time,
+    ) -> Result<Time, Error<'s>> {
+        match (outer_time, inner_time) {
+            (Runtime, Runtime) => Ok(Runtime),
+            (Comptime, Runtime) | (Runtime, Comptime) => Ok(Comptime),
+            (Comptime, Comptime) => Err(self.error_nested_comptime(v)),
+        }
+    }
+
+    fn error_nested_comptime<'s>(&self, v: Visitor<'s, '_, '_>) -> Error<'s> {
+        self.error(
+            v,
+            "nested comptime",
+            "This nested comptime annotation is redundant.",
+        )
     }
 
     fn error_expected<'s>(&self, v: Visitor<'s, '_, '_>, expected: &str) -> Error<'s> {

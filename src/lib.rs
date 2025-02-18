@@ -58,6 +58,10 @@ impl Tardigrade {
     }
 }
 
+/*******
+ * AST *
+ *******/
+
 /// Successfully parsed Tardigrade source code. Parameterized over the lifetime of its source code,
 /// which may be referenced in error messages.
 pub struct Ast<'s> {
@@ -65,32 +69,22 @@ pub struct Ast<'s> {
     block: (Block, Span),
 }
 
-pub struct TypeCheckedAst<'s> {
-    source: &'s Source,
-    block: (Block, Span),
-    functions: Vec<FuncStmt>,
-}
-
 impl<'s> Ast<'s> {
     pub fn type_check(
         mut self,
         logger: &mut Logger,
     ) -> Result<(Type, TypeCheckedAst<'s>), Error<'s>> {
-        span!(logger, Trace, "typecheck", {
-            span!(logger, Trace, "program", {
-                log!(logger, Trace, self.block.0);
-            });
-            let mut type_checker = TypeChecker::new(self.source, logger);
-            let ty = type_checker.check_prog(&mut self.block)?;
-            let functions = type_checker.finish();
-            let ast = TypeCheckedAst {
-                source: self.source,
-                block: self.block,
-                functions,
-            };
-            log!(logger, Trace, "type", ("{}", ty));
-            Ok((ty, ast))
-        })
+        let mut type_checker = TypeChecker::new(self.source, logger);
+        let ty = type_checker.check_prog(&mut self.block)?;
+        let (ct_funcs, rt_funcs) = type_checker.finish();
+        let ast = TypeCheckedAst {
+            source: self.source,
+            block: self.block,
+            ct_funcs,
+            rt_funcs,
+        };
+        log!(logger, Trace, "type", ("{}", ty));
+        Ok((ty, ast))
     }
 }
 
@@ -101,18 +95,56 @@ impl Format for Ast<'_> {
     }
 }
 
+/********************
+ * Type Checked AST *
+ ********************/
+
+pub struct TypeCheckedAst<'s> {
+    source: &'s Source,
+    block: (Block, Span),
+    ct_funcs: Vec<FuncStmt>,
+    rt_funcs: Vec<FuncStmt>,
+}
+
 impl<'s> TypeCheckedAst<'s> {
-    pub fn interpret(&'s self, logger: &mut Logger) -> Result<Value, Error<'s>> {
-        span!(logger, Trace, "interpret", {
-            let mut interpreter = Interpreter::new(self.source, &self.functions, logger);
-            let value = interpreter.interp_prog(&self.block)?;
-            interpreter.finish();
-            Ok(value)
+    pub fn compile(&'s self, logger: &mut Logger) -> Result<CompiledAst<'s>, Error<'s>> {
+        let mut interpreter = Interpreter::new(self.source, &self.ct_funcs, logger);
+        let (block, funcs) = interpreter.compile_prog(&self.block, &self.rt_funcs)?;
+        Ok(CompiledAst {
+            source: self.source,
+            block,
+            funcs,
         })
     }
 }
 
 impl Format for TypeCheckedAst<'_> {
+    /// Very naive pretty printing. Liable to put way too much on one line.
+    fn format(&self, f: &mut impl fmt::Write, indent: u32, prec: Prec) -> fmt::Result {
+        self.block.0.format(f, indent, prec)
+    }
+}
+
+/****************
+ * Compiled AST *
+ ****************/
+
+pub struct CompiledAst<'s> {
+    source: &'s Source,
+    block: (Block, Span),
+    funcs: Vec<FuncStmt>,
+}
+
+impl<'s> CompiledAst<'s> {
+    pub fn evaluate(&'s self, logger: &mut Logger) -> Result<Value, Error<'s>> {
+        let mut interpreter = Interpreter::new(self.source, &self.funcs, logger);
+        let value = interpreter.eval_prog(&self.block)?;
+        interpreter.finish();
+        Ok(value)
+    }
+}
+
+impl Format for CompiledAst<'_> {
     /// Very naive pretty printing. Liable to put way too much on one line.
     fn format(&self, f: &mut impl fmt::Write, indent: u32, prec: Prec) -> fmt::Result {
         self.block.0.format(f, indent, prec)

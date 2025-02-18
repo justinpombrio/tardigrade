@@ -25,7 +25,7 @@ TEST badly_nested_let_1
     end
     z
 EXPECT
-    Scope Error: Variable 'z' not found in this scope.
+    Scope Error: Variable z not found in this scope.
      --> badly_nested_let_1:4:9
       |
     4 |    x + z
@@ -40,7 +40,7 @@ TEST badly_nested_let_2
     end
     y
 EXPECT
-    Scope Error: Variable 'y' not found in this scope.
+    Scope Error: Variable y not found in this scope.
      --> badly_nested_let_2:6:1
       |
     6 |y

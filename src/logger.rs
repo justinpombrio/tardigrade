@@ -84,7 +84,7 @@ macro_rules! log {
     };
     ($logger:expr, $verbosity:ident, $fmt_obj:expr) => {
         if $logger.enabled($crate::Verbosity::$verbosity) {
-            $logger.log(&$fmt_obj);
+            $logger.log($fmt_obj);
         }
     }
 }

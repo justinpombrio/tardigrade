@@ -1,0 +1,61 @@
+TEST ct_if
+    #if 0 < 1 then
+        1 + 2
+    else
+        3 + 4
+    end
+EXPECT compile
+    1 + 2
+EXPECT run
+    3
+END
+
+TEST ct_let
+    #let x = 1 + 2
+    let y = #x + #x
+    y - 3
+EXPECT compile
+    let y = 3 + 3
+    y - 3
+EXPECT run
+    3
+END
+
+TEST ct_func
+    #func comp(x: Int) -> Int =
+        x + 1
+    end
+    func run(x: Int) -> Int =
+        x + 2
+    end
+    run(#comp(0))
+EXPECT compile
+    run(1)
+EXPECT run
+    3
+END
+
+TEST ct_block
+    block
+        let x = 1
+        #block
+            let x = 1 + 1
+            x
+        end + x
+    end
+EXPECT compile
+    block
+        let x = 1
+        2 + x
+    end
+EXPECT run
+    3
+END
+
+TEST ct_paren
+    1 * #(3 - 2) * 3
+EXPECT compile
+    1 * 1 * 3
+EXPECT run
+    3
+END

@@ -9,23 +9,25 @@ const TEST_DIR: &str = "tests/";
 const TEST_EXT: &str = "trd";
 const INDENT: &str = "    ";
 
+/// The test cases in one file.
+struct TestCaseGroup {
+    filename: String,
+    test_cases: Vec<TestCase>,
+}
+
 /// A single test case (TEST/EXPECT/END in the test files).
 struct TestCase {
     name: String,
     source: String,
-    operation: Operation,
-    expected_output: String,
-}
-
-struct TestCaseGroup {
-    filename: String,
-    test_cases: Vec<TestCase>,
+    expectations: Vec<(Operation, String)>,
 }
 
 /// What to do with the test case's source code.
 #[derive(Debug, Clone, Copy)]
 enum Operation {
     Format,
+    TypeCheck,
+    Compile,
     Run,
 }
 
@@ -43,41 +45,61 @@ fn run_tests() {
         span!(logger, Info, "file", ("{}", group.filename), {
             for test in group.test_cases {
                 span!(logger, Info, "test", ("{}", test.name), {
-                    let tardigrade = Tardigrade::new(&test.name, test.source.clone());
-                    let actual_output = match test.operation {
-                        Operation::Format => indent(fmt(&tardigrade)),
-                        Operation::Run => indent(run(&tardigrade, &mut logger)),
-                    };
-                    if test.expected_output == actual_output {
-                        log!(logger, Info, "pass");
-                    } else {
-                        log!(
-                            logger,
-                            Required,
-                            "TEST",
-                            ("{} in {}", test.name, group.filename)
+                    for (operation, expected_output) in &test.expectations {
+                        run_test_expectation(
+                            &group.filename,
+                            &test,
+                            *operation,
+                            expected_output,
+                            &mut logger,
                         );
-                        logger.start_span();
-                        log!(logger, Required, test.source);
-                        logger.end_span();
-                        match test.operation {
-                            Operation::Format => log!(logger, Required, "EXPECT format"),
-                            Operation::Run => log!(logger, Required, "EXPECT"),
-                        }
-                        logger.start_span();
-                        log!(logger, Required, test.expected_output);
-                        logger.end_span();
-                        log!(logger, Required, "ACTUAL");
-                        logger.start_span();
-                        log!(logger, Required, actual_output);
-                        logger.end_span();
-                        log!(logger, Required, "END");
-
-                        panic!("Test case failed.");
                     }
                 })
             }
         })
+    }
+}
+
+fn run_test_expectation(
+    filename: &str,
+    test: &TestCase,
+    operation: Operation,
+    expected_output: &str,
+    logger: &mut Logger,
+) {
+    let tardigrade = Tardigrade::new(&test.name, test.source.clone());
+    let mut actual_output = match operation {
+        Operation::Format => fmt(&tardigrade),
+        Operation::TypeCheck => type_check(&tardigrade, logger),
+        Operation::Compile => compile(&tardigrade, logger),
+        Operation::Run => run(&tardigrade, logger),
+    };
+    if actual_output.ends_with("\n") {
+        actual_output.pop();
+    }
+    if expected_output == actual_output {
+        log!(logger, Info, "pass");
+    } else {
+        log!(logger, Required, "TEST", ("{} in {}", test.name, filename));
+        logger.start_span();
+        log!(logger, Required, &test.source);
+        logger.end_span();
+        match operation {
+            Operation::Format => log!(logger, Required, "EXPECT format"),
+            Operation::TypeCheck => log!(logger, Required, "EXPECT type"),
+            Operation::Compile => log!(logger, Required, "EXPECT compile"),
+            Operation::Run => log!(logger, Required, "EXPECT"),
+        }
+        logger.start_span();
+        log!(logger, Required, &expected_output);
+        logger.end_span();
+        log!(logger, Required, "ACTUAL");
+        logger.start_span();
+        log!(logger, Required, &actual_output);
+        logger.end_span();
+        log!(logger, Required, "END");
+
+        panic!("Test case failed.");
     }
 }
 
@@ -117,6 +139,7 @@ fn parse_test_cases(filename: String, input: String) -> TestCaseGroup {
     let mut source = String::new();
     let mut operation = Operation::Format;
     let mut output = String::new();
+    let mut expectations = Vec::new();
     let mut test_cases = Vec::new();
     for line in input.lines() {
         if line.is_empty() || line.starts_with("//") {
@@ -133,14 +156,7 @@ fn parse_test_cases(filename: String, input: String) -> TestCaseGroup {
             }
             ReadingSource => {
                 if line.starts_with("EXPECT") {
-                    operation = match line {
-                        "EXPECT format" => Operation::Format,
-                        "EXPECT" => Operation::Run,
-                        _ => panic!(
-                            "Test cases: expected 'EXPECT' or 'EXPECT format', found '{}'",
-                            line
-                        ),
-                    };
+                    operation = parse_operation(line);
                     parse_state = ReadingOutput;
                 } else if line.starts_with("TEST") || line.starts_with("END") {
                     panic!("Test cases: expected 'EXPECT', found '{}'", line);
@@ -156,21 +172,24 @@ fn parse_test_cases(filename: String, input: String) -> TestCaseGroup {
                 }
             }
             ReadingOutput => {
-                if line.starts_with("END") {
+                if line.starts_with("EXPECT") {
+                    expectations.push((operation, mem::take(&mut output)));
+                    operation = parse_operation(line);
+                } else if line.starts_with("END") {
+                    expectations.push((operation, mem::take(&mut output)));
                     test_cases.push(TestCase {
                         name: mem::take(&mut test_name),
                         source: mem::take(&mut source),
-                        operation,
-                        expected_output: mem::take(&mut output),
+                        expectations: mem::take(&mut expectations),
                     });
                     parse_state = Initial;
-                } else if line.starts_with("TEST") || line.starts_with("EXPECT") {
+                } else if line.starts_with("TEST") {
                     panic!("Test cases: expected 'END', found '{}'", line);
                 } else {
                     if !output.is_empty() {
                         output += "\n";
                     }
-                    output += line;
+                    output += line.strip_prefix(INDENT).expect("indentation required");
                 }
             }
         }
@@ -186,33 +205,16 @@ fn parse_test_cases(filename: String, input: String) -> TestCaseGroup {
     }
 }
 
-/// Prefix all lines of `text` with `INDENT`.
-fn indent(text: String) -> String {
-    let mut output = String::new();
-    for (i, line) in text.lines().enumerate() {
-        if i != 0 {
-            output.push('\n');
-        }
-        output.push_str(INDENT);
-        output.push_str(line);
-    }
-    output
-}
-
-/// Run Tardigrade source code, and print the return value if it ran successfully, or the error
-/// message if it didn't.
-fn run(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
-    match tardigrade.parse() {
-        Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
-        Ok(ast) => match ast.type_check(logger) {
-            Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
-            Ok((_, ast)) => match ast.interpret(logger) {
-                Err(runtime_err) => {
-                    format!("{}", runtime_err.display_with_color_override(false))
-                }
-                Ok(value) => format!("{}", value),
-            },
-        },
+fn parse_operation(line: &str) -> Operation {
+    match line {
+        "EXPECT format" => Operation::Format,
+        "EXPECT type" => Operation::TypeCheck,
+        "EXPECT compile" => Operation::Compile,
+        "EXPECT" | "EXPECT run" => Operation::Run,
+        _ => panic!(
+            "Test cases: expected 'EXPECT' or 'EXPECT format', found '{}'",
+            line
+        ),
     }
 }
 
@@ -225,5 +227,56 @@ fn fmt(tardigrade: &Tardigrade) -> String {
             ast.format(&mut buffer, 0, Prec::MAX).unwrap();
             buffer
         }
+    }
+}
+
+fn type_check(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
+    match tardigrade.parse() {
+        Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
+        Ok(ast) => match ast.type_check(logger) {
+            Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
+            Ok((ty, _)) => ty.to_string(),
+        },
+    }
+}
+
+fn compile(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
+    match tardigrade.parse() {
+        Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
+        Ok(ast) => match ast.type_check(logger) {
+            Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
+            Ok((_, ast)) => match ast.compile(logger) {
+                Err(compilation_err) => {
+                    format!("{}", compilation_err.display_with_color_override(false))
+                }
+                Ok(ast) => {
+                    let mut buffer = String::new();
+                    ast.format(&mut buffer, 0, Prec::MAX).unwrap();
+                    buffer
+                }
+            },
+        },
+    }
+}
+
+/// Run Tardigrade source code, and print the return value if it ran successfully, or the error
+/// message if it didn't.
+fn run(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
+    match tardigrade.parse() {
+        Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
+        Ok(ast) => match ast.type_check(logger) {
+            Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
+            Ok((_, ast)) => match ast.compile(logger) {
+                Err(compilation_err) => {
+                    format!("{}", compilation_err.display_with_color_override(false))
+                }
+                Ok(ast) => match ast.evaluate(logger) {
+                    Err(runtime_err) => {
+                        format!("{}", runtime_err.display_with_color_override(false))
+                    }
+                    Ok(value) => format!("{}", value),
+                },
+            },
+        },
     }
 }
