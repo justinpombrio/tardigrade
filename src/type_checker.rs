@@ -1,5 +1,6 @@
 use crate::ast::{
-    self, Block, Expr, FuncId, FuncRefn, FuncStmt, LetStmt, Literal, Span, Stmt, VarRefn,
+    self, ApplyExpr, Block, Expr, FuncId, FuncRefn, FuncStmt, IfExpr, LetStmt, Literal, Span, Stmt,
+    Time, VarRefn,
 };
 use crate::error::Error;
 use crate::logger::{Logger, Verbosity};
@@ -8,10 +9,14 @@ use panfix::Source;
 use std::fmt;
 use std::ops::Deref;
 
+use Time::{Comptime, Runtime};
+
 pub struct TypeChecker<'s, 'l> {
     source: &'s Source,
-    stack: Vec<StackFrame>,
-    funcs: Vec<Option<FuncStmt>>,
+    ct_stack: Vec<StackFrame>,
+    rt_stack: Vec<StackFrame>,
+    ct_funcs: Vec<Option<FuncStmt>>,
+    rt_funcs: Vec<Option<FuncStmt>>,
     logger: &'l mut Logger,
 }
 
@@ -41,42 +46,55 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
     pub fn new(source: &'s Source, logger: &'l mut Logger) -> TypeChecker<'s, 'l> {
         TypeChecker {
             source,
-            stack: Vec::new(),
-            funcs: Vec::new(),
+            ct_stack: Vec::new(),
+            rt_stack: Vec::new(),
+            ct_funcs: Vec::new(),
+            rt_funcs: Vec::new(),
             logger,
         }
     }
 
     pub fn check_prog(&mut self, block: &mut (Block, Span)) -> Result<Type, Error<'s>> {
-        self.stack.push(StackFrame::new());
-        let ty = self.check_block(block)?;
-        self.stack.pop();
-        Ok(ty)
+        span!(self.logger, Trace, "typecheck", {
+            span!(self.logger, Trace, "program", {
+                log!(self.logger, Trace, &block.0);
+            });
+            self.ct_stack.push(StackFrame::new());
+            self.rt_stack.push(StackFrame::new());
+            let ty = self.check_block(block, Runtime)?;
+            self.ct_stack.pop();
+            self.rt_stack.pop();
+            Ok(ty)
+        })
     }
 
-    fn check_block(&mut self, block: &mut (Block, Span)) -> Result<Type, Error<'s>> {
+    fn check_block(&mut self, block: &mut (Block, Span), time: Time) -> Result<Type, Error<'s>> {
         span!(self.logger, Trace, "block", {
-            let ty = self.check_block_impl(block)?;
-            log!(self.logger, Trace, block.0);
+            let ty = self.check_block_impl(block, time)?;
+            log!(self.logger, Trace, &block.0);
             log!(self.logger, Trace, "type", ("{}", ty));
             Ok(ty)
         })
     }
 
-    fn check_block_impl(&mut self, block: &mut (Block, Span)) -> Result<Type, Error<'s>> {
+    fn check_block_impl(
+        &mut self,
+        block: &mut (Block, Span),
+        time: Time,
+    ) -> Result<Type, Error<'s>> {
         let mut result = Type::Unit;
-        self.frame_mut().start_block();
+        self.frame_mut(time).start_block();
         let mut remaining_stmts = Vec::new();
         let mut stmts = block.0 .0.drain(..).peekable();
         while let Some((mut stmt, span)) = stmts.next() {
             match &mut stmt {
                 Stmt::Expr(ref mut expr) => {
-                    let ty = self.check_expr(expr)?;
+                    let ty = self.check_expr(expr, time)?;
                     result = ty;
                     remaining_stmts.push((stmt, span));
                 }
                 Stmt::Let(ref mut let_stmt) => {
-                    self.check_let_stmt(let_stmt)?;
+                    self.check_let_stmt(let_stmt, time)?;
                     remaining_stmts.push((stmt, span));
                 }
                 Stmt::Func(_) => {
@@ -96,17 +114,17 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
                         }
                         funcs
                     };
-                    self.check_funcs(contiguous_funcs)?;
+                    self.check_funcs(contiguous_funcs, time)?;
                 }
             }
         }
         std::mem::drop(stmts);
         block.0 .0.append(&mut remaining_stmts);
-        self.frame_mut().end_block();
+        self.frame_mut(time).end_block();
         Ok(result)
     }
 
-    fn check_funcs(&mut self, funcs: Vec<FuncStmt>) -> Result<(), Error<'s>> {
+    fn check_funcs(&mut self, funcs: Vec<FuncStmt>, time: Time) -> Result<(), Error<'s>> {
         // A function's id is its index into `self.funcs`.
         // Assigning these ids is tricky because other functions may be given ids while we're type
         // checking the current function.
@@ -114,57 +132,66 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
 
         // TODO: check that function names are disjoint
         for func in &funcs {
-            let id = self.funcs.len();
+            let time = time + func.time;
+            let id = self.funcs(time).len();
             func_ids.push(id);
-            self.funcs.push(None);
+            self.funcs_mut(time).push(None);
             let ty = type_of_function(func);
-            self.frame_mut().push_func(&func.var.name, id, ty);
+            self.frame_mut(time).push_func(&func.var.name, id, ty);
         }
         for (id, func) in func_ids.into_iter().zip(funcs.into_iter()) {
-            self.check_func_stmt(func, id)?;
+            self.check_func_stmt(func, id, time)?;
         }
         Ok(())
     }
 
-    fn check_let_stmt(&mut self, let_stmt: &mut LetStmt) -> Result<(), Error<'s>> {
+    fn check_let_stmt(&mut self, let_stmt: &mut LetStmt, time: Time) -> Result<(), Error<'s>> {
         span!(self.logger, Trace, "let", ("{}", let_stmt.var.name), {
-            self.check_let_stmt_impl(let_stmt)
+            self.check_let_stmt_impl(let_stmt, time)
         })
     }
 
-    fn check_func_stmt(&mut self, mut func: FuncStmt, id: FuncId) -> Result<(), Error<'s>> {
+    fn check_let_stmt_impl(&mut self, let_stmt: &mut LetStmt, time: Time) -> Result<(), Error<'s>> {
+        let time = time + let_stmt.time;
+        let ty = self.check_expr(&mut let_stmt.definition, time)?;
+        self.frame_mut(time).push_var(&let_stmt.var.name, ty);
+        Ok(())
+    }
+
+    fn check_func_stmt(
+        &mut self,
+        mut func: FuncStmt,
+        id: FuncId,
+        time: Time,
+    ) -> Result<(), Error<'s>> {
         span!(self.logger, Trace, "func", ("{}", func.var.name), {
-            self.frame_mut().start_block();
+            let time = time + func.time;
+            self.frame_mut(time).start_block();
             // TODO: check that function params are disjoint
             for param in &mut func.params {
-                self.frame_mut().push_arg(&param.var.name, param.ty.clone());
+                self.frame_mut(time)
+                    .push_arg(&param.var.name, param.ty.clone());
             }
-            self.stack.push(StackFrame::new());
-            self.expect_block(&mut func.body, &func.return_type)?;
-            self.stack.pop();
-            self.frame_mut().end_block();
-            self.funcs[id] = Some(func);
+            self.stack_mut(time).push(StackFrame::new());
+            self.expect_block(&mut func.body, &func.return_type, time)?;
+            self.stack_mut(time).pop();
+            self.frame_mut(time).end_block();
+            self.funcs_mut(time)[id] = Some(func);
             log!(self.logger, Trace, "id", ("{}", id));
             Ok(())
         })
     }
 
-    fn check_let_stmt_impl(&mut self, let_stmt: &mut LetStmt) -> Result<(), Error<'s>> {
-        let ty = self.check_expr(&mut let_stmt.definition)?;
-        self.frame_mut().push_var(&let_stmt.var.name, ty);
-        Ok(())
-    }
-
     /// Type check the given expression, which must be from the `Source` that this `TypeChecker`
     /// was cosntructed from.
-    pub fn check_expr(&mut self, expr: &mut (Expr, Span)) -> Result<Type, Error<'s>> {
+    pub fn check_expr(&mut self, expr: &mut (Expr, Span), time: Time) -> Result<Type, Error<'s>> {
         if self.logger.enabled(Verbosity::Trace) {
             if let (Expr::Literal(literal), _) = expr {
                 let ty = self.check_literal(literal);
                 log!(self.logger, Trace, "literal", ("{} : {}", literal, ty));
                 Ok(ty)
             } else if let (Expr::Var(var), span) = expr {
-                let ty = self.check_var(var, *span)?;
+                let ty = self.check_var_refn(var, *span, time)?;
                 log!(
                     self.logger,
                     Trace,
@@ -179,72 +206,95 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
                 Ok(ty)
             } else {
                 span!(self.logger, Trace, "expr", {
-                    let ty = self.check_expr_impl(expr)?;
-                    log!(self.logger, Trace, expr.0);
+                    let ty = self.check_expr_impl(expr, time)?;
+                    log!(self.logger, Trace, &expr.0);
                     log!(self.logger, Trace, "type", ("{}", ty));
                     Ok(ty)
                 })
             }
         } else {
-            self.check_expr_impl(expr)
+            self.check_expr_impl(expr, time)
         }
     }
 
-    pub fn check_expr_impl(&mut self, expr: &mut (Expr, Span)) -> Result<Type, Error<'s>> {
+    pub fn check_expr_impl(
+        &mut self,
+        expr: &mut (Expr, Span),
+        time: Time,
+    ) -> Result<Type, Error<'s>> {
         use ast::Binop::*;
         use ast::Unop::*;
         use Expr::*;
 
         match &mut expr.0 {
-            Var(var_refn) => self.check_var(var_refn, expr.1),
+            Var(var_refn) => self.check_var_refn(var_refn, expr.1, time),
             Literal(literal) => Ok(self.check_literal(literal)),
             Unop(Not, x) => {
-                self.expect_expr(x, &Type::Bool)?;
+                self.expect_expr(x, &Type::Bool, time)?;
                 Ok(Type::Bool)
             }
             Binop(Add | Sub | Mul | Div, x, y) => {
-                self.expect_expr(x, &Type::Int)?;
-                self.expect_expr(y, &Type::Int)?;
+                self.expect_expr(x, &Type::Int, time)?;
+                self.expect_expr(y, &Type::Int, time)?;
                 Ok(Type::Int)
             }
             Binop(Eq | Ne | Lt | Le | Gt | Ge, x, y) => {
-                self.expect_expr(x, &Type::Int)?;
-                self.expect_expr(y, &Type::Int)?;
+                self.expect_expr(x, &Type::Int, time)?;
+                self.expect_expr(y, &Type::Int, time)?;
                 Ok(Type::Bool)
             }
             Binop(And | Or, x, y) => {
-                self.expect_expr(x, &Type::Bool)?;
-                self.expect_expr(y, &Type::Bool)?;
+                self.expect_expr(x, &Type::Bool, time)?;
+                self.expect_expr(y, &Type::Bool, time)?;
 
                 Ok(Type::Bool)
             }
-            If(e_if, e_then, e_else) => {
-                self.expect_expr(e_if, &Type::Bool)?;
-                let t_then = self.check_expr(e_then)?;
-                let t_else = self.check_expr(e_else)?;
-                if t_then == t_else {
-                    Ok(t_else)
-                } else {
-                    Err(error_branch_mismatch(self.source, &t_then, &t_else, expr.1))
-                }
-            }
-            Apply(func_refn, args) => {
-                let func_type = self.check_func_refn(&mut func_refn.0, func_refn.1)?.clone();
-                if func_type.params.len() != args.len() {
-                    return Err(error_wrong_num_args(
-                        self.source,
-                        func_type.params.len(),
-                        args.len(),
-                        expr.1,
-                    ));
-                }
-                for (arg, param) in args.iter_mut().zip(func_type.params.iter()) {
-                    self.expect_expr(arg, param)?;
-                }
-                Ok(func_type.return_type.deref().clone())
-            }
-            Block(block) => self.check_block(block),
+            If(if_expr) => self.check_if_expr(if_expr, expr.1, time),
+            Apply(apply_expr) => self.check_apply_expr(apply_expr, expr.1, time),
+            Block(block_expr) => self.check_block(&mut block_expr.block, time + block_expr.time),
+            ComptimeExpr(expr) => self.check_expr(expr, Comptime),
         }
+    }
+
+    pub fn check_if_expr(
+        &mut self,
+        if_expr: &mut IfExpr,
+        span: Span,
+        time: Time,
+    ) -> Result<Type, Error<'s>> {
+        let time = time + if_expr.time;
+        self.expect_expr(&mut if_expr.e_if, &Type::Bool, time)?;
+        let t_then = self.check_expr(&mut if_expr.e_then, time)?;
+        let t_else = self.check_expr(&mut if_expr.e_else, time)?;
+        if t_then == t_else {
+            Ok(t_else)
+        } else {
+            Err(error_branch_mismatch(self.source, &t_then, &t_else, span))
+        }
+    }
+
+    pub fn check_apply_expr(
+        &mut self,
+        apply_expr: &mut ApplyExpr,
+        span: Span,
+        time: Time,
+    ) -> Result<Type, Error<'s>> {
+        let time = time + apply_expr.time;
+        let func_type = self
+            .check_func_refn(&mut apply_expr.func.0, apply_expr.func.1, time)?
+            .clone();
+        if func_type.params.len() != apply_expr.args.len() {
+            return Err(error_wrong_num_args(
+                self.source,
+                func_type.params.len(),
+                apply_expr.args.len(),
+                span,
+            ));
+        }
+        for (arg, param) in apply_expr.args.iter_mut().zip(func_type.params.iter()) {
+            self.expect_expr(arg, param, time)?;
+        }
+        Ok(func_type.return_type.deref().clone())
     }
 
     pub fn check_literal(&mut self, literal: &Literal) -> Type {
@@ -257,41 +307,13 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         }
     }
 
-    pub fn finish(self) -> Vec<FuncStmt> {
-        if !self.stack.is_empty() {
-            panic!("Type Checking: leftover stack frame\n{:?}", self.stack);
-        }
-        self.funcs
-            .into_iter()
-            .map(|func| func.unwrap())
-            .collect::<Vec<_>>()
-    }
-
-    fn frame_mut(&mut self) -> &mut StackFrame {
-        self.stack
-            .last_mut()
-            .expect("Type Checking: missing stack frame")
-    }
-
-    fn expect_block<'t>(
-        &mut self,
-        block: &'t mut (Block, Span),
-        expected: &'t Type,
-    ) -> Result<&'t Type, Error<'s>> {
-        let actual = self.check_block(block)?;
-        if &actual == expected {
-            Ok(expected)
-        } else {
-            Err(error_type_mismatch(self.source, &actual, expected, block.1))
-        }
-    }
-
     fn expect_expr<'t>(
         &mut self,
         expr: &'t mut (Expr, Span),
         expected: &'t Type,
+        time: Time,
     ) -> Result<&'t Type, Error<'s>> {
-        let actual = self.check_expr(expr)?;
+        let actual = self.check_expr(expr, time)?;
         if &actual == expected {
             Ok(expected)
         } else {
@@ -299,8 +321,13 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         }
     }
 
-    fn check_func_refn(&mut self, func: &mut FuncRefn, span: Span) -> Result<FuncType, Error<'s>> {
-        let ty = self.check_func_refn_impl(func, span)?.clone();
+    fn check_func_refn(
+        &mut self,
+        func: &mut FuncRefn,
+        span: Span,
+        time: Time,
+    ) -> Result<FuncType, Error<'s>> {
+        let ty = self.check_func_refn_impl(func, span, time)?.clone();
         log!(
             self.logger,
             Trace,
@@ -319,25 +346,39 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         &mut self,
         func_refn: &mut FuncRefn,
         span: Span,
+        time: Time,
     ) -> Result<&FuncType, Error<'s>> {
-        for (depth, frame) in self.stack.iter().rev().enumerate() {
+        for (depth, frame) in self.stack(time).iter().rev().enumerate() {
             if let Some((id, ty)) = frame.lookup_func(&func_refn.name) {
                 func_refn.depth = Some(depth);
                 func_refn.id = Some(id);
                 return Ok(ty);
             }
         }
+        let prefix = match time {
+            Comptime => "#",
+            Runtime => "",
+        };
         Err(Error::new(
             "Scope Error",
             self.source,
             span,
             "unbound",
-            &format!("Function '{}' not found in this scope.", func_refn.name),
+            &format!(
+                "Function {}{} not found in this scope.",
+                prefix, func_refn.name
+            ),
         ))
     }
 
-    fn check_var(&mut self, var_refn: &mut VarRefn, span: Span) -> Result<Type, Error<'s>> {
-        for (depth, frame) in self.stack.iter().rev().enumerate() {
+    fn check_var_refn(
+        &mut self,
+        var_refn: &mut VarRefn,
+        span: Span,
+        time: Time,
+    ) -> Result<Type, Error<'s>> {
+        let time = time + var_refn.time;
+        for (depth, frame) in self.stack(time).iter().rev().enumerate() {
             if let Some((offset, ty)) = frame.lookup_var(&var_refn.name) {
                 if offset < 0 {
                     var_refn.depth = Some(depth - 1);
@@ -348,13 +389,91 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
                 return Ok(ty.clone());
             }
         }
+        let prefix = match time {
+            Comptime => "#",
+            Runtime => "",
+        };
         Err(Error::new(
             "Scope Error",
             self.source,
             span,
             "unbound",
-            &format!("Variable '{}' not found in this scope.", var_refn.name),
+            &format!(
+                "Variable {}{} not found in this scope.",
+                prefix, var_refn.name
+            ),
         ))
+    }
+
+    /// Perform some sanity checks, then return a pair of all
+    /// `(comptime_funcs, runtime_funcs)`, which have been pulled out of the AST.
+    pub fn finish(self) -> (Vec<FuncStmt>, Vec<FuncStmt>) {
+        fn unwrap_opts<T>(v: Vec<Option<T>>) -> Vec<T> {
+            v.into_iter().map(|opt| opt.unwrap()).collect::<Vec<_>>()
+        }
+
+        if !self.ct_stack.is_empty() {
+            panic!(
+                "Type Checking: leftover comptime stack frame\n{:?}",
+                self.ct_stack
+            );
+        }
+        if !self.rt_stack.is_empty() {
+            panic!(
+                "Type Checking: leftover runtime stack frame\n{:?}",
+                self.rt_stack
+            );
+        }
+
+        (unwrap_opts(self.ct_funcs), unwrap_opts(self.rt_funcs))
+    }
+
+    fn funcs(&self, time: Time) -> &Vec<Option<FuncStmt>> {
+        match time {
+            Comptime => &self.ct_funcs,
+            Runtime => &self.rt_funcs,
+        }
+    }
+
+    fn funcs_mut(&mut self, time: Time) -> &mut Vec<Option<FuncStmt>> {
+        match time {
+            Comptime => &mut self.ct_funcs,
+            Runtime => &mut self.rt_funcs,
+        }
+    }
+
+    fn stack(&self, time: Time) -> &Vec<StackFrame> {
+        match time {
+            Comptime => &self.ct_stack,
+            Runtime => &self.rt_stack,
+        }
+    }
+
+    fn stack_mut(&mut self, time: Time) -> &mut Vec<StackFrame> {
+        match time {
+            Comptime => &mut self.ct_stack,
+            Runtime => &mut self.rt_stack,
+        }
+    }
+
+    fn frame_mut(&mut self, time: Time) -> &mut StackFrame {
+        self.stack_mut(time)
+            .last_mut()
+            .expect("Type Checking: missing stack frame")
+    }
+
+    fn expect_block<'t>(
+        &mut self,
+        block: &'t mut (Block, Span),
+        expected: &'t Type,
+        time: Time,
+    ) -> Result<&'t Type, Error<'s>> {
+        let actual = self.check_block(block, time)?;
+        if &actual == expected {
+            Ok(expected)
+        } else {
+            Err(error_type_mismatch(self.source, &actual, expected, block.1))
+        }
     }
 }
 
@@ -442,19 +561,32 @@ impl fmt::Display for StackFrame {
 
 impl fmt::Display for TypeChecker<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "stack")?;
-        for frame in &self.stack {
-            write!(f, "{}", frame)?;
-        }
-        writeln!(f, "end")?;
-        writeln!(f, "functions")?;
-        for func in &self.funcs {
-            if let Some(func) = func {
-                writeln!(f, "  {}", func.var.name)?;
-            } else {
-                writeln!(f, "  None")?;
+        fn show_stack_and_funcs(
+            f: &mut fmt::Formatter,
+            stack: &Vec<StackFrame>,
+            funcs: &Vec<Option<FuncStmt>>,
+        ) -> fmt::Result {
+            writeln!(f, "  stack")?;
+            for frame in stack {
+                write!(f, "    {}", frame)?;
             }
+            writeln!(f, "  end")?;
+            writeln!(f, "  functions")?;
+            for func in funcs {
+                if let Some(func) = func {
+                    writeln!(f, "    {}", func.var.name)?;
+                } else {
+                    writeln!(f, "    None")?;
+                }
+            }
+            writeln!(f, "  end")
         }
+
+        writeln!(f, "comptime")?;
+        show_stack_and_funcs(f, &self.ct_stack, &self.ct_funcs)?;
+        writeln!(f, "end")?;
+        writeln!(f, "runtime")?;
+        show_stack_and_funcs(f, &self.rt_stack, &self.rt_funcs)?;
         writeln!(f, "end")
     }
 }

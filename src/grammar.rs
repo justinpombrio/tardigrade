@@ -12,6 +12,7 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
 
     grammar.regex("Int", r#"-?0|[1-9][0-9]*"#)?;
     grammar.regex("Var", r#"[_a-z][_0-9a-zA-Z]*"#)?;
+    grammar.regex("VarCT", r#"#[_a-z][_0-9a-zA-Z]*"#)?;
     grammar.string("Unit", "()")?;
     grammar.string("True", "true")?;
     grammar.string("False", "false")?;
@@ -20,8 +21,10 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
     grammar.string("TypeInt", "Int")?;
 
     grammar.op("Block", pattern!("block" "end"))?;
+    grammar.op("BlockCT", pattern!("#block" "end"))?;
     grammar.op("Func", pattern!("func" "(" ")" "=" "end"))?;
-
+    grammar.op("FuncCT", pattern!("#func" "(" ")" "=" "end"))?;
+    grammar.op("Comptime", pattern!("#(" ")"))?;
     grammar.op("Parens", pattern!("(" ")"))?;
 
     grammar.right_assoc();
@@ -60,12 +63,14 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
 
     grammar.right_assoc();
     grammar.op("If", pattern!("if" "then" "else" "end"))?;
+    grammar.op("IfCT", pattern!("#if" "then" "else" "end"))?;
 
     grammar.right_assoc();
     grammar.op("Comma", pattern!(_ "," _))?;
 
     grammar.right_assoc();
     grammar.op("Let", pattern!("let" "=" _))?;
+    grammar.op("LetCT", pattern!("#let" "=" _))?;
 
     grammar.right_assoc();
     grammar.juxtapose()?;
@@ -88,7 +93,9 @@ pub enum Token {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StmtToken {
     Let,
+    LetCT,
     Func,
+    FuncCT,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,17 +106,21 @@ pub enum TypeToken {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExprToken {
-    Value(ValueToken),
+    Literal(LiteralToken),
     Var,
+    VarCT,
     Apply,
-    Unop(Unop),
-    Binop(Binop),
+    EUnop(Unop),
+    EBinop(Binop),
     If,
+    IfCT,
     Block,
+    BlockCT,
+    Comptime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValueToken {
+pub enum LiteralToken {
     Unit,
     True,
     False,
@@ -120,45 +131,55 @@ impl Token {
     // Really, the Panfix parser should be parameterized over this Token type rather than working
     // with strings. But since they're strings we'll convert them.
     pub fn from_str(op_name: &str) -> Token {
+        use Token::*;
+
         match op_name {
-            "Blank" => Token::Blank,
-            "Juxtapose" => Token::Juxtapose,
-            "Comma" => Token::Comma,
-            "Colon" => Token::Colon,
-            "Arrow" => Token::Arrow,
-            "Let" => Token::Stmt(StmtToken::Let),
-            "Func" => Token::Stmt(StmtToken::Func),
-            "TypeBool" => Token::Type(TypeToken::Bool),
-            "TypeInt" => Token::Type(TypeToken::Int),
-            op_name => Token::Expr(ExprToken::from_str(op_name)),
+            "Blank" => Blank,
+            "Juxtapose" => Juxtapose,
+            "Comma" => Comma,
+            "Colon" => Colon,
+            "Arrow" => Arrow,
+            "Let" => Stmt(StmtToken::Let),
+            "LetCT" => Stmt(StmtToken::LetCT),
+            "Func" => Stmt(StmtToken::Func),
+            "FuncCT" => Stmt(StmtToken::FuncCT),
+            "TypeBool" => Type(TypeToken::Bool),
+            "TypeInt" => Type(TypeToken::Int),
+            op_name => Expr(ExprToken::from_str(op_name)),
         }
     }
 }
 
 impl ExprToken {
     fn from_str(op_name: &str) -> ExprToken {
+        use ExprToken::*;
+
         match op_name {
-            "Unit" => ExprToken::Value(ValueToken::Unit),
-            "True" => ExprToken::Value(ValueToken::True),
-            "False" => ExprToken::Value(ValueToken::False),
-            "Int" => ExprToken::Value(ValueToken::Int),
-            "Var" => ExprToken::Var,
-            "Apply" => ExprToken::Apply,
-            "If" => ExprToken::If,
-            "Not" => ExprToken::Unop(Unop::Not),
-            "Add" => ExprToken::Binop(Binop::Add),
-            "Sub" => ExprToken::Binop(Binop::Sub),
-            "Mul" => ExprToken::Binop(Binop::Mul),
-            "Div" => ExprToken::Binop(Binop::Div),
-            "Eq" => ExprToken::Binop(Binop::Eq),
-            "Ne" => ExprToken::Binop(Binop::Ne),
-            "Lt" => ExprToken::Binop(Binop::Lt),
-            "Le" => ExprToken::Binop(Binop::Le),
-            "Gt" => ExprToken::Binop(Binop::Gt),
-            "Ge" => ExprToken::Binop(Binop::Ge),
-            "And" => ExprToken::Binop(Binop::And),
-            "Or" => ExprToken::Binop(Binop::Or),
-            "Block" => ExprToken::Block,
+            "Unit" => Literal(LiteralToken::Unit),
+            "True" => Literal(LiteralToken::True),
+            "False" => Literal(LiteralToken::False),
+            "Int" => Literal(LiteralToken::Int),
+            "Var" => Var,
+            "VarCT" => VarCT,
+            "Apply" => Apply,
+            "If" => If,
+            "IfCT" => IfCT,
+            "Not" => EUnop(Unop::Not),
+            "Add" => EBinop(Binop::Add),
+            "Sub" => EBinop(Binop::Sub),
+            "Mul" => EBinop(Binop::Mul),
+            "Div" => EBinop(Binop::Div),
+            "Eq" => EBinop(Binop::Eq),
+            "Ne" => EBinop(Binop::Ne),
+            "Lt" => EBinop(Binop::Lt),
+            "Le" => EBinop(Binop::Le),
+            "Gt" => EBinop(Binop::Gt),
+            "Ge" => EBinop(Binop::Ge),
+            "And" => EBinop(Binop::And),
+            "Or" => EBinop(Binop::Or),
+            "Block" => Block,
+            "BlockCT" => BlockCT,
+            "Comptime" => Comptime,
             other => panic!("Bug in parser: missing token {}", other),
         }
     }
@@ -176,7 +197,9 @@ impl fmt::Display for Token {
             Colon => write!(f, "':'"),
             Arrow => write!(f, "'->'"),
             Stmt(Let) => write!(f, "let statement"),
+            Stmt(LetCT) => write!(f, "comptime let statement"),
             Stmt(Func) => write!(f, "function definition"),
+            Stmt(FuncCT) => write!(f, "comptime function definition"),
             Type(_) => write!(f, "type"),
             Expr(_) => write!(f, "expression"),
         }

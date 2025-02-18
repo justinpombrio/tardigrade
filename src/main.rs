@@ -11,6 +11,12 @@ struct CommandLineArgs {
     /// Whether to format the source file instead of running it.
     #[arg(short, long)]
     format: bool,
+    /// Whether to type check the source file instead of running it.
+    #[arg(short, long)]
+    type_check: bool,
+    /// Whether to compile and print the source file instead of running it.
+    #[arg(short, long)]
+    compile: bool,
     /// Whether to be extra verbose when logging. Takes priority over --quiet.
     #[arg(short, long)]
     verbose: bool,
@@ -32,23 +38,49 @@ fn prompt(buffer: &mut String) -> Result<&str, io::Error> {
     Ok(buffer.trim())
 }
 
-fn run(tardigrade: &Tardigrade, logger: &mut Logger) {
+fn fmt(tardigrade: &Tardigrade, logger: &mut Logger) {
+    match tardigrade.parse() {
+        Err(parse_err) => println!("{}", parse_err),
+        Ok(ast) => log!(logger, Required, &ast),
+    }
+}
+
+fn type_check(tardigrade: &Tardigrade, logger: &mut Logger) {
     match tardigrade.parse() {
         Err(parse_err) => println!("{}", parse_err),
         Ok(ast) => match ast.type_check(logger) {
             Err(type_err) => println!("{}", type_err),
-            Ok((_, ast)) => match ast.interpret(logger) {
-                Err(runtime_err) => println!("{}", runtime_err),
-                Ok(value) => println!("{}", value),
+            Ok((ty, _)) => println!("{}", ty),
+        },
+    }
+}
+
+fn compile(tardigrade: &Tardigrade, logger: &mut Logger) {
+    match tardigrade.parse() {
+        Err(parse_err) => println!("{}", parse_err),
+        Ok(ast) => match ast.type_check(logger) {
+            Err(type_err) => println!("{}", type_err),
+            Ok((_, ast)) => match ast.compile(logger) {
+                Err(compilation_err) => println!("{}", compilation_err),
+                Ok(ast) => log!(logger, Required, &ast),
             },
         },
     }
 }
 
-fn fmt(tardigrade: &Tardigrade, logger: &mut Logger) {
+fn run(tardigrade: &Tardigrade, logger: &mut Logger) {
     match tardigrade.parse() {
         Err(parse_err) => println!("{}", parse_err),
-        Ok(ast) => log!(logger, Required, ast),
+        Ok(ast) => match ast.type_check(logger) {
+            Err(type_err) => println!("{}", type_err),
+            Ok((_, ast)) => match ast.compile(logger) {
+                Err(compilation_err) => println!("{}", compilation_err),
+                Ok(ast) => match ast.evaluate(logger) {
+                    Err(runtime_err) => println!("{}", runtime_err),
+                    Ok(value) => println!("{}", value),
+                },
+            },
+        },
     }
 }
 
@@ -80,6 +112,10 @@ fn main() {
         let tardigrade = Tardigrade::open(path).unwrap();
         if args.format {
             fmt(&tardigrade, &mut logger);
+        } else if args.type_check {
+            type_check(&tardigrade, &mut logger);
+        } else if args.compile {
+            compile(&tardigrade, &mut logger);
         } else {
             run(&tardigrade, &mut logger);
         }

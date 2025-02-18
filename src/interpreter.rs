@@ -1,9 +1,14 @@
-use crate::ast::{self, Block, Expr, FuncStmt, LetStmt, Literal, Span, Value, VarRefn};
+use crate::ast::{
+    self, ApplyExpr, Block, BlockExpr, Expr, FuncStmt, IfExpr, LetStmt, Literal, Span, Stmt, Time,
+    Value, VarRefn,
+};
 use crate::error::Error;
 use crate::logger::{Logger, Verbosity};
 use crate::stack::Stack;
 use crate::{log, span};
 use panfix::Source;
+
+use Time::{Comptime, Runtime};
 
 pub struct Interpreter<'s, 'l> {
     source: &'s Source,
@@ -26,20 +31,272 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         }
     }
 
-    pub fn interp_prog(&mut self, block: &'s (Block, Span)) -> Result<Value, Error<'s>> {
-        self.interp_block(block)
+    /***************
+     * Compilation *
+     ***************/
+
+    pub fn compile_prog(
+        &mut self,
+        block: &'s (Block, Span),
+        funcs: &'s Vec<FuncStmt>,
+    ) -> Result<((Block, Span), Vec<FuncStmt>), Error<'s>> {
+        span!(self.logger, Trace, "compile", {
+            span!(self.logger, Trace, "program", {
+                log!(self.logger, Trace, &block.0);
+            });
+            span!(self.logger, Trace, "functions", {
+                for func in funcs {
+                    span!(self.logger, Trace, "function", {
+                        log!(self.logger, Trace, func);
+                    });
+                }
+            });
+            let rt_block = self.compile_block(block)?;
+            let rt_funcs = funcs
+                .iter()
+                .map(|func| self.compile_func(func))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((rt_block, rt_funcs))
+        })
     }
 
-    fn interp_block(&mut self, block: &'s (Block, Span)) -> Result<Value, Error<'s>> {
-        span!(self.logger, Trace, "block", {
-            let value = self.interp_block_impl(block)?;
-            log!(self.logger, Trace, block.0);
+    fn compile_block(&mut self, block: &'s (Block, Span)) -> Result<(Block, Span), Error<'s>> {
+        span!(self.logger, Trace, "compile_block", {
+            let result = self.compile_block_impl(block)?;
+            log!(self.logger, Trace, &block.0);
+            span!(self.logger, Trace, "block", {
+                log!(self.logger, Trace, &result.0);
+            });
+            Ok(result)
+        })
+    }
+
+    fn compile_block_impl(&mut self, block: &'s (Block, Span)) -> Result<(Block, Span), Error<'s>> {
+        use ast::Stmt::*;
+
+        let mut stmts = Vec::new();
+        let start_of_block = self.stack.start_block();
+        for stmt in &block.0 .0 {
+            match &stmt.0 {
+                Expr(expr) => {
+                    let rt_expr = self.compile_expr(expr)?;
+                    stmts.push((Expr(rt_expr), expr.1));
+                }
+                Let(let_stmt) => self.compile_let(let_stmt, stmt.1, &mut stmts)?,
+                Func(_) => {
+                    panic!("compile: leftover function");
+                }
+            }
+        }
+        self.stack.end_block(start_of_block);
+        Ok((Block(stmts), block.1))
+    }
+
+    fn compile_func(&mut self, func: &'s FuncStmt) -> Result<FuncStmt, Error<'s>> {
+        let body = self.compile_block(&func.body)?;
+        Ok(FuncStmt {
+            var: func.var.clone(),
+            params: func.params.clone(),
+            return_type: func.return_type.clone(),
+            body,
+            time: Runtime,
+        })
+    }
+
+    fn compile_let(
+        &mut self,
+        let_stmt: &'s LetStmt,
+        span: Span,
+        stmts: &mut Vec<(Stmt, Span)>,
+    ) -> Result<(), Error<'s>> {
+        span!(self.logger, Trace, "let", ("{}", let_stmt.var.name), {
+            match let_stmt.time {
+                Comptime => {
+                    self.eval_let(let_stmt)?;
+                    Ok(())
+                }
+                Runtime => {
+                    let definition = self.compile_expr(&let_stmt.definition)?;
+                    let rt_let = LetStmt {
+                        var: let_stmt.var.clone(),
+                        definition,
+                        time: Runtime,
+                    };
+                    stmts.push((Stmt::Let(rt_let), span));
+                    Ok(())
+                }
+            }
+        })
+    }
+
+    fn compile_expr(&mut self, expr: &'s (Expr, Span)) -> Result<(Expr, Span), Error<'s>> {
+        if self.logger.enabled(Verbosity::Trace) {
+            if let (Expr::Literal(literal), _) = expr {
+                log!(self.logger, Trace, "literal", ("{}", literal));
+                Ok((Expr::Literal(literal.clone()), expr.1))
+            } else if let (Expr::Var(var), span) = expr {
+                log!(
+                    self.logger,
+                    Trace,
+                    "var",
+                    (
+                        "{} depth:{} offset:{}",
+                        var.name,
+                        var.unwrap_depth(),
+                        var.unwrap_offset()
+                    )
+                );
+                self.compile_var(var, *span)
+            } else {
+                span!(self.logger, Trace, "expr", {
+                    let rt_expr = self.compile_expr_impl(expr)?;
+                    log!(self.logger, Trace, &expr.0);
+                    span!(self.logger, Trace, "expr", {
+                        log!(self.logger, Trace, &rt_expr.0);
+                    });
+                    Ok(rt_expr)
+                })
+            }
+        } else {
+            self.compile_expr_impl(expr)
+        }
+    }
+
+    fn compile_expr_impl(&mut self, expr: &'s (Expr, Span)) -> Result<(Expr, Span), Error<'s>> {
+        use Expr::*;
+
+        let span = expr.1;
+        match &expr.0 {
+            Var(var) => Ok(self.compile_var(var, span)?),
+            Literal(literal) => Ok((Expr::Literal(literal.clone()), span)),
+            Unop(unop, x) => {
+                let rt_x = self.compile_expr(x)?;
+                Ok((Unop(*unop, Box::new(rt_x)), span))
+            }
+            Binop(binop, x, y) => {
+                let rt_x = self.compile_expr(x)?;
+                let rt_y = self.compile_expr(y)?;
+                Ok((Binop(*binop, Box::new(rt_x), Box::new(rt_y)), span))
+            }
+            If(if_expr) => self.compile_if_expr(if_expr, span),
+            Apply(apply_expr) => self.compile_apply_expr(apply_expr, span),
+            Block(block_expr) => self.compile_block_expr(block_expr, span),
+            ComptimeExpr(expr) => {
+                let value = self.eval_expr(expr)?;
+                Ok((Expr::Literal(value.into_literal()), span))
+            }
+        }
+    }
+
+    fn compile_if_expr(
+        &mut self,
+        if_expr: &'s IfExpr,
+        span: Span,
+    ) -> Result<(Expr, Span), Error<'s>> {
+        match if_expr.time {
+            Comptime => {
+                let cond = self.eval_expr(&if_expr.e_if)?.unwrap_bool();
+                if cond {
+                    self.compile_expr(&if_expr.e_then)
+                } else {
+                    self.compile_expr(&if_expr.e_else)
+                }
+            }
+            Runtime => {
+                let e_if = self.compile_expr(&if_expr.e_if)?;
+                let e_then = self.compile_expr(&if_expr.e_then)?;
+                let e_else = self.compile_expr(&if_expr.e_else)?;
+                let rt_if_expr = IfExpr {
+                    e_if: Box::new(e_if),
+                    e_then: Box::new(e_then),
+                    e_else: Box::new(e_else),
+                    time: Runtime,
+                };
+                Ok((Expr::If(rt_if_expr), span))
+            }
+        }
+    }
+
+    fn compile_apply_expr(
+        &mut self,
+        apply_expr: &'s ApplyExpr,
+        span: Span,
+    ) -> Result<(Expr, Span), Error<'s>> {
+        match apply_expr.time {
+            Comptime => {
+                let value = self.eval_apply_expr(apply_expr)?;
+                Ok((Expr::Literal(value.into_literal()), span))
+            }
+            Runtime => {
+                let rt_args = apply_expr
+                    .args
+                    .iter()
+                    .map(|arg| self.compile_expr(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let rt_apply_expr = ApplyExpr {
+                    func: apply_expr.func.clone(),
+                    args: rt_args,
+                    time: Runtime,
+                };
+                Ok((Expr::Apply(rt_apply_expr), span))
+            }
+        }
+    }
+
+    fn compile_block_expr(
+        &mut self,
+        block_expr: &'s BlockExpr,
+        span: Span,
+    ) -> Result<(Expr, Span), Error<'s>> {
+        match block_expr.time {
+            Comptime => {
+                let value = self.eval_block(&block_expr.block)?;
+                Ok((Expr::Literal(value.into_literal()), span))
+            }
+            Runtime => {
+                let rt_block = self.compile_block(&block_expr.block)?;
+                let rt_block_expr = BlockExpr {
+                    block: Box::new(rt_block),
+                    time: Runtime,
+                };
+                Ok((Expr::Block(rt_block_expr), span))
+            }
+        }
+    }
+
+    fn compile_var(&mut self, var: &VarRefn, span: Span) -> Result<(Expr, Span), Error<'s>> {
+        match var.time {
+            Runtime => Ok((Expr::Var(var.clone()), span)),
+            Comptime => {
+                let value = self.eval_var(var)?;
+                Ok((Expr::Literal(value.into_literal()), span))
+            }
+        }
+    }
+
+    /**************
+     * Evaluation *
+     **************/
+
+    pub fn eval_prog(&mut self, block: &'s (Block, Span)) -> Result<Value, Error<'s>> {
+        span!(self.logger, Trace, "evaluate", {
+            span!(self.logger, Trace, "program", {
+                log!(self.logger, Trace, &block.0);
+            });
+            self.eval_block(block)
+        })
+    }
+
+    fn eval_block(&mut self, block: &'s (Block, Span)) -> Result<Value, Error<'s>> {
+        span!(self.logger, Trace, "eval_block", {
+            let value = self.eval_block_impl(block)?;
+            log!(self.logger, Trace, &block.0);
             log!(self.logger, Trace, "value", ("{}", value));
             Ok(value)
         })
     }
 
-    fn interp_block_impl(&mut self, block: &'s (Block, Span)) -> Result<Value, Error<'s>> {
+    fn eval_block_impl(&mut self, block: &'s (Block, Span)) -> Result<Value, Error<'s>> {
         use ast::Stmt::*;
 
         let start_of_block = self.stack.start_block();
@@ -47,13 +304,13 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         for stmt in &block.0 .0 {
             match &stmt.0 {
                 Expr(e) => {
-                    result = self.interp_expr(e)?;
+                    result = self.eval_expr(e)?;
                 }
                 Let(let_stmt) => {
-                    self.interp_let(let_stmt)?;
+                    self.eval_let(let_stmt)?;
                 }
-                Func(_func) => {
-                    panic!("interp: leftover function");
+                Func(_) => {
+                    panic!("eval: leftover function");
                 }
             }
         }
@@ -61,20 +318,18 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         Ok(result)
     }
 
-    fn interp_let(&mut self, let_stmt: &'s LetStmt) -> Result<(), Error<'s>> {
+    fn eval_let(&mut self, let_stmt: &'s LetStmt) -> Result<(), Error<'s>> {
         span!(self.logger, Trace, "let", ("{}", let_stmt.var.name), {
-            let value = self.interp_expr(&let_stmt.definition)?;
+            let value = self.eval_expr(&let_stmt.definition)?;
             self.stack.push(value);
             Ok(())
         })
     }
 
-    /// Interpret the expression, producing either a result or a runtime Error. `expr` must be from
-    /// the `Source` that this interpreter was constructed with.
-    fn interp_expr(&mut self, expr: &'s (Expr, Span)) -> Result<Value, Error<'s>> {
+    fn eval_expr(&mut self, expr: &'s (Expr, Span)) -> Result<Value, Error<'s>> {
         if self.logger.enabled(Verbosity::Trace) {
             if let (Expr::Literal(literal), _) = expr {
-                let value = self.interp_literal(literal);
+                let value = self.eval_literal(literal);
                 log!(self.logger, Trace, "literal", ("{}", value));
                 Ok(value)
             } else if let (Expr::Var(var), _) = expr {
@@ -89,36 +344,36 @@ impl<'s, 'l> Interpreter<'s, 'l> {
                         var.unwrap_offset()
                     )
                 );
-                self.interp_var(var)
+                self.eval_var(var)
             } else {
                 span!(self.logger, Trace, "expr", {
-                    let value = self.interp_expr_impl(expr)?;
-                    log!(self.logger, Trace, expr.0);
+                    let value = self.eval_expr_impl(expr)?;
+                    log!(self.logger, Trace, &expr.0);
                     log!(self.logger, Trace, "value", ("{}", value));
                     Ok(value)
                 })
             }
         } else {
-            self.interp_expr_impl(expr)
+            self.eval_expr_impl(expr)
         }
     }
 
-    fn interp_expr_impl(&mut self, expr: &'s (Expr, Span)) -> Result<Value, Error<'s>> {
+    fn eval_expr_impl(&mut self, expr: &'s (Expr, Span)) -> Result<Value, Error<'s>> {
         use ast::Binop::*;
         use ast::Unop::*;
         use Expr::*;
 
         match &expr.0 {
-            Var(var) => self.interp_var(var),
-            Literal(literal) => Ok(self.interp_literal(literal)),
+            Var(var) => self.eval_var(var),
+            Literal(literal) => Ok(self.eval_literal(literal)),
             Unop(Not, x) => self.apply_unop_b_b(x, |x| !x),
             Binop(Add, x, y) => self.apply_binop_ii_i(x, y, |x, y| x + y),
             Binop(Sub, x, y) => self.apply_binop_ii_i(x, y, |x, y| x - y),
             Binop(Mul, x, y) => self.apply_binop_ii_i(x, y, |x, y| x * y),
             Binop(Div, x, y) => {
                 let span = y.1;
-                let x = self.interp_expr(x)?.unwrap_int();
-                let y = self.interp_expr(y)?.unwrap_int();
+                let x = self.eval_expr(x)?.unwrap_int();
+                let y = self.eval_expr(y)?.unwrap_int();
                 if y == 0 {
                     Err(self.error_divide_by_zero(span))
                 } else {
@@ -133,36 +388,43 @@ impl<'s, 'l> Interpreter<'s, 'l> {
             Binop(Ge, x, y) => self.apply_binop_ii_b(x, y, |x, y| x >= y),
             Binop(And, x, y) => self.apply_binop_bb_b(x, y, |x, y| x && y),
             Binop(Or, x, y) => self.apply_binop_bb_b(x, y, |x, y| x || y),
-            If(e_if, e_then, e_else) => {
-                let b = self.interp_expr(e_if)?.unwrap_bool();
-                if b {
-                    self.interp_expr(e_then)
-                } else {
-                    self.interp_expr(e_else)
-                }
+            If(if_expr) => self.eval_if_expr(if_expr),
+            Apply(apply_expr) => self.eval_apply_expr(apply_expr),
+            Block(block) => self.eval_block(&block.block),
+            ComptimeExpr(_) => {
+                panic!("eval: leftover comptime")
             }
-            Apply(func_refn, args) => {
-                log!(
-                    self.logger,
-                    Trace,
-                    "apply",
-                    ("{} id:{}", func_refn.0.name, func_refn.0.unwrap_id())
-                );
-                let func = &self.funcs[func_refn.0.unwrap_id()];
-                for arg in args {
-                    let arg_val = self.interp_expr(arg)?;
-                    self.stack.push(arg_val);
-                }
-                self.stack.start_frame(func_refn.0.unwrap_depth());
-                let result = self.interp_block(&func.body)?;
-                self.stack.end_frame(func.params.len());
-                Ok(result)
-            }
-            Block(block) => self.interp_block(block),
         }
     }
 
-    fn interp_literal(&mut self, literal: &Literal) -> Value {
+    fn eval_if_expr(&mut self, expr: &'s IfExpr) -> Result<Value, Error<'s>> {
+        let b = self.eval_expr(&expr.e_if)?.unwrap_bool();
+        if b {
+            self.eval_expr(&expr.e_then)
+        } else {
+            self.eval_expr(&expr.e_else)
+        }
+    }
+
+    fn eval_apply_expr(&mut self, expr: &'s ApplyExpr) -> Result<Value, Error<'s>> {
+        log!(
+            self.logger,
+            Trace,
+            "apply",
+            ("{} id:{}", &expr.func.0.name, &expr.func.0.unwrap_id())
+        );
+        let func = &self.funcs[expr.func.0.unwrap_id()];
+        for arg in &expr.args {
+            let arg_val = self.eval_expr(arg)?;
+            self.stack.push(arg_val);
+        }
+        self.stack.start_frame(expr.func.0.unwrap_depth());
+        let result = self.eval_block(&func.body)?;
+        self.stack.end_frame(func.params.len());
+        Ok(result)
+    }
+
+    fn eval_literal(&mut self, literal: &Literal) -> Value {
         use Literal::*;
 
         match literal {
@@ -172,7 +434,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         }
     }
 
-    fn interp_var(&mut self, var: &VarRefn) -> Result<Value, Error<'s>> {
+    fn eval_var(&mut self, var: &VarRefn) -> Result<Value, Error<'s>> {
         let depth = var.unwrap_depth();
         let offset = var.unwrap_offset();
         Ok(self.stack.lookup(depth, offset).clone())
@@ -187,7 +449,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         x: &'s (Expr, Span),
         f: impl Fn(bool) -> bool,
     ) -> Result<Value, Error<'s>> {
-        let x = self.interp_expr(x)?.unwrap_bool();
+        let x = self.eval_expr(x)?.unwrap_bool();
         Ok(Value::bool(f(x)))
     }
 
@@ -197,8 +459,8 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         y: &'s (Expr, Span),
         f: impl Fn(i32, i32) -> i32,
     ) -> Result<Value, Error<'s>> {
-        let x = self.interp_expr(x)?.unwrap_int();
-        let y = self.interp_expr(y)?.unwrap_int();
+        let x = self.eval_expr(x)?.unwrap_int();
+        let y = self.eval_expr(y)?.unwrap_int();
         Ok(Value::int(f(x, y)))
     }
 
@@ -208,8 +470,8 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         y: &'s (Expr, Span),
         f: impl Fn(i32, i32) -> bool,
     ) -> Result<Value, Error<'s>> {
-        let x = self.interp_expr(x)?.unwrap_int();
-        let y = self.interp_expr(y)?.unwrap_int();
+        let x = self.eval_expr(x)?.unwrap_int();
+        let y = self.eval_expr(y)?.unwrap_int();
         Ok(Value::bool(f(x, y)))
     }
 
@@ -219,8 +481,8 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         y: &'s (Expr, Span),
         f: impl Fn(bool, bool) -> bool,
     ) -> Result<Value, Error<'s>> {
-        let x = self.interp_expr(x)?.unwrap_bool();
-        let y = self.interp_expr(y)?.unwrap_bool();
+        let x = self.eval_expr(x)?.unwrap_bool();
+        let y = self.eval_expr(y)?.unwrap_bool();
         Ok(Value::bool(f(x, y)))
     }
 

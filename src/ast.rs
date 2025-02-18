@@ -1,5 +1,6 @@
 use crate::type_checker::Type;
 use std::fmt;
+use std::ops::Add;
 
 /*******
  * AST *
@@ -8,6 +9,12 @@ use std::fmt;
 pub type Span = panfix::Span;
 
 pub type FuncId = usize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Time {
+    Runtime,
+    Comptime,
+}
 
 #[derive(Debug, Clone)]
 pub struct Var {
@@ -28,9 +35,10 @@ pub enum Stmt {
 pub struct LetStmt {
     pub var: Var,
     pub definition: (Expr, Span),
+    pub time: Time,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Param {
     pub var: Var,
     pub ty: Type,
@@ -42,17 +50,41 @@ pub struct FuncStmt {
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: (Block, Span),
+    pub time: Time,
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug)]
 pub enum Expr {
     Var(VarRefn),
     Literal(Literal),
     Unop(Unop, Box<(Expr, Span)>),
     Binop(Binop, Box<(Expr, Span)>, Box<(Expr, Span)>),
-    If(Box<(Expr, Span)>, Box<(Expr, Span)>, Box<(Expr, Span)>),
-    Apply((FuncRefn, Span), Vec<(Expr, Span)>),
-    Block((Block, Span)),
+    If(IfExpr),
+    Apply(ApplyExpr),
+    Block(BlockExpr),
+    ComptimeExpr(Box<(Expr, Span)>),
+}
+
+#[derive(Debug)]
+pub struct ApplyExpr {
+    pub func: (FuncRefn, Span),
+    pub args: Vec<(Expr, Span)>,
+    pub time: Time,
+}
+
+#[derive(Debug)]
+pub struct IfExpr {
+    pub e_if: Box<(Expr, Span)>,
+    pub e_then: Box<(Expr, Span)>,
+    pub e_else: Box<(Expr, Span)>,
+    pub time: Time,
+}
+
+#[derive(Debug)]
+pub struct BlockExpr {
+    pub block: Box<(Block, Span)>,
+    pub time: Time,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,20 +111,43 @@ pub enum Binop {
 /// References the `offset`th variable in the `depth`th statically-enclosing stack frame.
 ///
 /// (See https://en.wikipedia.org/wiki/Call_stack#Lexically_nested_routines)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VarRefn {
     pub name: String,
     // Filled out during type checking
     pub depth: Option<usize>,
     pub offset: Option<isize>,
+    pub time: Time,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FuncRefn {
     pub name: String,
     // Filled out during type checking
     pub depth: Option<usize>,
     pub id: Option<FuncId>,
+}
+
+impl VarRefn {
+    pub fn new(name: &str, time: Time) -> VarRefn {
+        VarRefn {
+            name: name.to_owned(),
+            // Will be filled out during type checking
+            depth: None,
+            offset: None,
+            time,
+        }
+    }
+
+    pub fn unwrap_depth(&self) -> usize {
+        self.depth
+            .expect("VarRefn.depth not set during type checking")
+    }
+
+    pub fn unwrap_offset(&self) -> isize {
+        self.offset
+            .expect("VarRefn.offset not set during type checking")
+    }
 }
 
 impl FuncRefn {
@@ -112,27 +167,6 @@ impl FuncRefn {
 
     pub fn unwrap_id(&self) -> FuncId {
         self.id.expect("FuncRefn.id not set during type checking")
-    }
-}
-
-impl VarRefn {
-    pub fn new(name: &str) -> VarRefn {
-        VarRefn {
-            name: name.to_owned(),
-            // Will be filled out during type checking
-            depth: None,
-            offset: None,
-        }
-    }
-
-    pub fn unwrap_depth(&self) -> usize {
-        self.depth
-            .expect("VarRefn.depth not set during type checking")
-    }
-
-    pub fn unwrap_offset(&self) -> isize {
-        self.offset
-            .expect("VarRefn.offset not set during type checking")
     }
 }
 
@@ -181,7 +215,7 @@ impl Unop {
  * Values *
  **********/
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Literal {
     Unit,
     Bool(bool),
@@ -218,7 +252,7 @@ impl Value {
 
     pub fn unwrap_unit(self) {
         if !matches!(self.0, ValueCase::Unit) {
-            self.type_mismatch(Some(&Type::Unit))
+            self.type_mismatch(&Type::Unit)
         }
     }
 
@@ -226,7 +260,7 @@ impl Value {
         if let ValueCase::Bool(b) = self.0 {
             b
         } else {
-            self.type_mismatch(Some(&Type::Bool))
+            self.type_mismatch(&Type::Bool)
         }
     }
 
@@ -234,34 +268,41 @@ impl Value {
         if let ValueCase::Int(int) = self.0 {
             int
         } else {
-            self.type_mismatch(Some(&Type::Int))
+            self.type_mismatch(&Type::Int)
         }
     }
 
-    fn type_mismatch(self, expected: Option<&Type>) -> ! {
-        let actual = match self.0.type_of() {
-            None => "function".to_owned(),
-            Some(ty) => ty.to_string(),
-        };
-        let expected = match expected {
-            None => "function".to_owned(),
-            Some(ty) => ty.to_string(),
-        };
+    fn type_mismatch(self, expected: &Type) -> ! {
         panic!(
             "Bug in type checker! Wrong type: expected {} but found {}",
-            expected, actual,
+            expected,
+            self.0.type_of()
         )
+    }
+
+    pub fn into_literal(self) -> Literal {
+        self.0.into_literal()
     }
 }
 
 impl ValueCase {
-    fn type_of(self) -> Option<Type> {
+    fn type_of(self) -> Type {
         use ValueCase::*;
 
         match self {
-            Unit => Some(Type::Unit),
-            Bool(_) => Some(Type::Bool),
-            Int(_) => Some(Type::Int),
+            Unit => Type::Unit,
+            Bool(_) => Type::Bool,
+            Int(_) => Type::Int,
+        }
+    }
+
+    fn into_literal(self) -> Literal {
+        use ValueCase::*;
+
+        match self {
+            Unit => Literal::Unit,
+            Bool(b) => Literal::Bool(b),
+            Int(n) => Literal::Int(n),
         }
     }
 }
@@ -286,6 +327,30 @@ impl fmt::Display for Literal {
             Unit => write!(f, "()"),
             Bool(b) => write!(f, "{}", b),
             Int(n) => write!(f, "{}", n),
+        }
+    }
+}
+
+impl fmt::Display for Time {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use Time::*;
+
+        match self {
+            Runtime => write!(f, "runtime"),
+            Comptime => write!(f, "comptime"),
+        }
+    }
+}
+
+impl Add for Time {
+    type Output = Time;
+
+    fn add(self, other: Time) -> Time {
+        use Time::*;
+
+        match (self, other) {
+            (Runtime, Runtime) => Runtime,
+            (Comptime, _) | (_, Comptime) => Comptime,
         }
     }
 }
