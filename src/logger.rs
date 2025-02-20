@@ -21,7 +21,7 @@ impl Logger {
         }
     }
 
-    pub fn msg(&mut self, key: &'static str, message: Option<String>) {
+    pub fn msg(&mut self, key: &str, message: Option<String>) {
         use colored::Colorize;
 
         let indent = (self.indentation * INDENT_WIDTH) as usize;
@@ -34,7 +34,7 @@ impl Logger {
         }
     }
 
-    pub fn span_msg(&mut self, key: &'static str, message: Option<String>) {
+    pub fn span_msg(&mut self, key: &str, message: Option<String>) {
         use colored::Colorize;
 
         let indent = (self.indentation * INDENT_WIDTH) as usize;
@@ -77,7 +77,7 @@ macro_rules! log {
             $logger.msg($key, None);
         }
     };
-    ($logger:expr, $verbosity:ident, $key:literal, ($fmt_str:literal, $($args:expr),+)) => {
+    ($logger:expr, $verbosity:ident, $key:expr, ($fmt_str:literal, $($args:expr),+)) => {
         if $logger.enabled($crate::Verbosity::$verbosity) {
             $logger.msg($key, Some(format!($fmt_str, $($args),+)));
         }
@@ -91,7 +91,7 @@ macro_rules! log {
 
 #[macro_export]
 macro_rules! span {
-    ($logger:expr, $verbosity:ident, $key:literal, $body:block) => {{
+    ($logger:expr, $verbosity:ident, $key:expr, $body:block) => {{
         if $logger.enabled($crate::Verbosity::$verbosity) {
             $logger.span_msg($key, None);
             $logger.start_span();
@@ -104,7 +104,7 @@ macro_rules! span {
             $body
         }
     }};
-    ($logger:expr, $verbosity:ident, $key:literal, ($fmt_str:literal, $($args:expr),+), $body:block) => {{
+    ($logger:expr, $verbosity:ident, $key:expr, ($fmt_str:literal, $($args:expr),+), $body:block) => {{
         if $logger.enabled($crate::Verbosity::$verbosity) {
             $logger.span_msg($key, Some(format!($fmt_str, $($args),*)));
             $logger.start_span();

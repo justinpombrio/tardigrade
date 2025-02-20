@@ -69,7 +69,7 @@ fn run_test_expectation(
 ) {
     let tardigrade = Tardigrade::new(&test.name, test.source.clone());
     let mut actual_output = match operation {
-        Operation::Format => fmt(&tardigrade),
+        Operation::Format => fmt(&tardigrade, logger),
         Operation::TypeCheck => type_check(&tardigrade, logger),
         Operation::Compile => compile(&tardigrade, logger),
         Operation::Run => run(&tardigrade, logger),
@@ -219,8 +219,8 @@ fn parse_operation(line: &str) -> Operation {
 }
 
 /// Format Tardigrade source code
-fn fmt(tardigrade: &Tardigrade) -> String {
-    match tardigrade.parse() {
+fn fmt(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
+    match tardigrade.parse(logger) {
         Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
         Ok(ast) => {
             let mut buffer = String::new();
@@ -231,7 +231,7 @@ fn fmt(tardigrade: &Tardigrade) -> String {
 }
 
 fn type_check(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
-    match tardigrade.parse() {
+    match tardigrade.parse(logger) {
         Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
         Ok(ast) => match ast.type_check(logger) {
             Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
@@ -241,7 +241,7 @@ fn type_check(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
 }
 
 fn compile(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
-    match tardigrade.parse() {
+    match tardigrade.parse(logger) {
         Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
         Ok(ast) => match ast.type_check(logger) {
             Err(type_err) => format!("{}", type_err.display_with_color_override(false)),
@@ -262,7 +262,7 @@ fn compile(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
 /// Run Tardigrade source code, and print the return value if it ran successfully, or the error
 /// message if it didn't.
 fn run(tardigrade: &Tardigrade, logger: &mut Logger) -> String {
-    match tardigrade.parse() {
+    match tardigrade.parse(logger) {
         Err(parse_err) => format!("{}", parse_err.display_with_color_override(false)),
         Ok(ast) => match ast.type_check(logger) {
             Err(type_err) => format!("{}", type_err.display_with_color_override(false)),

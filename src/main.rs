@@ -39,14 +39,14 @@ fn prompt(buffer: &mut String) -> Result<&str, io::Error> {
 }
 
 fn fmt(tardigrade: &Tardigrade, logger: &mut Logger) {
-    match tardigrade.parse() {
+    match tardigrade.parse(logger) {
         Err(parse_err) => println!("{}", parse_err),
         Ok(ast) => log!(logger, Required, &ast),
     }
 }
 
 fn type_check(tardigrade: &Tardigrade, logger: &mut Logger) {
-    match tardigrade.parse() {
+    match tardigrade.parse(logger) {
         Err(parse_err) => println!("{}", parse_err),
         Ok(ast) => match ast.type_check(logger) {
             Err(type_err) => println!("{}", type_err),
@@ -56,7 +56,7 @@ fn type_check(tardigrade: &Tardigrade, logger: &mut Logger) {
 }
 
 fn compile(tardigrade: &Tardigrade, logger: &mut Logger) {
-    match tardigrade.parse() {
+    match tardigrade.parse(logger) {
         Err(parse_err) => println!("{}", parse_err),
         Ok(ast) => match ast.type_check(logger) {
             Err(type_err) => println!("{}", type_err),
@@ -69,7 +69,7 @@ fn compile(tardigrade: &Tardigrade, logger: &mut Logger) {
 }
 
 fn run(tardigrade: &Tardigrade, logger: &mut Logger) {
-    match tardigrade.parse() {
+    match tardigrade.parse(logger) {
         Err(parse_err) => println!("{}", parse_err),
         Ok(ast) => match ast.type_check(logger) {
             Err(type_err) => println!("{}", type_err),

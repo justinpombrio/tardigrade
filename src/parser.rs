@@ -6,7 +6,9 @@ use crate::ast::{
 };
 use crate::error::Error;
 use crate::grammar::{construct_grammar, ExprToken, LiteralToken, StmtToken, Token, TypeToken};
+use crate::logger::Logger;
 use crate::type_checker::Type;
+use crate::{log, span};
 use panfix::{Parser as PanfixParser, Source, Visitor};
 
 use Time::{Comptime, Runtime};
@@ -18,8 +20,18 @@ impl Parser {
         Parser(construct_grammar())
     }
 
-    pub fn parse<'s>(&self, source: &'s Source) -> Result<(Block, Span), Error<'s>> {
+    pub fn parse<'s>(
+        &self,
+        source: &'s Source,
+        logger: &mut Logger,
+    ) -> Result<(Block, Span), Error<'s>> {
         let tree = self.0.parse(source)?;
+        span!(logger, Trace, "source", {
+            log!(logger, Trace, &source.source());
+        });
+        span!(logger, Trace, "parse_tree", {
+            log_parse_tree(tree.visitor(), logger);
+        });
         self.parse_block_with_span(tree.visitor(), Runtime)
     }
 
@@ -406,5 +418,16 @@ impl<'s> From<panfix::ParseError<'s>> for Error<'s> {
             label: err.short_message,
             message: err.message,
         }
+    }
+}
+
+fn log_parse_tree(v: Visitor, logger: &mut Logger) {
+    match v.num_children() {
+        0 => log!(logger, Trace, v.name(), ("{}", v.source())),
+        n => span!(logger, Trace, v.name(), {
+            for i in 0..n {
+                log_parse_tree(v.child(i), logger);
+            }
+        }),
     }
 }
