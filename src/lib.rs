@@ -48,9 +48,9 @@ impl Tardigrade {
     }
 
     /// Attempt to parse this source code.
-    pub fn parse(&self) -> Result<Ast, Error> {
+    pub fn parse(&self, logger: &mut Logger) -> Result<Ast, Error> {
         let parser = Parser::new();
-        let (block, span) = parser.parse(&self.source)?;
+        let (block, span) = parser.parse(&self.source, logger)?;
         Ok(Ast {
             source: &self.source,
             block: (block, span),
