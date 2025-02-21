@@ -29,17 +29,63 @@ struct StackFrame {
     blocks: Vec<(usize, usize, usize)>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub enum Type {
     Unit,
     Bool,
     Int,
+    Never,
+    // If extended, update unify() and matches()
+}
+
+impl Type {
+    fn unify(&self, other: &Type) -> Option<Type> {
+        use Type::*;
+
+        match (self, other) {
+            (Never, _) | (_, Never) => Some(Never),
+            (Unit, Unit) => Some(Unit),
+            (Bool, Bool) => Some(Bool),
+            (Int, Int) => Some(Int),
+            (_, _) => None,
+        }
+    }
+
+    fn matches(&self, expected_type: &Type) -> bool {
+        use Type::*;
+
+        match (self, expected_type) {
+            (Never, _) => true,
+            (Unit, Unit) => true,
+            (Bool, Bool) => true,
+            (Int, Int) => true,
+            (_, _) => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct FuncType {
     params: Vec<Type>,
     return_type: Box<Type>,
+}
+
+#[derive(Clone, Copy)]
+struct Context<'a> {
+    return_type: Option<&'a Type>,
+    // In the future: block for break/continue support
+}
+
+impl<'a> Context<'a> {
+    fn empty() -> Context<'a> {
+        Context { return_type: None }
+    }
+
+    fn with_return_type(self, return_type: &'a Type) -> Context<'a> {
+        Context {
+            return_type: Some(return_type),
+        }
+    }
 }
 
 impl<'s, 'l> TypeChecker<'s, 'l> {
@@ -61,16 +107,21 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
             });
             self.ct_stack.push(StackFrame::new());
             self.rt_stack.push(StackFrame::new());
-            let ty = self.check_block(block, Runtime)?;
+            let ty = self.check_block(block, Runtime, Context::empty())?;
             self.ct_stack.pop();
             self.rt_stack.pop();
             Ok(ty)
         })
     }
 
-    fn check_block(&mut self, block: &mut (Block, Span), time: Time) -> Result<Type, Error<'s>> {
+    fn check_block(
+        &mut self,
+        block: &mut (Block, Span),
+        time: Time,
+        ctx: Context,
+    ) -> Result<Type, Error<'s>> {
         span!(self.logger, Trace, "block", {
-            let ty = self.check_block_impl(block, time)?;
+            let ty = self.check_block_impl(block, time, ctx)?;
             log!(self.logger, Trace, &block.0);
             log!(self.logger, Trace, "type", ("{}", ty));
             Ok(ty)
@@ -81,6 +132,7 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         &mut self,
         block: &mut (Block, Span),
         time: Time,
+        ctx: Context,
     ) -> Result<Type, Error<'s>> {
         let mut result = Type::Unit;
         self.frame_mut(time).start_block();
@@ -89,12 +141,12 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         while let Some((mut stmt, span)) = stmts.next() {
             match &mut stmt {
                 Stmt::Expr(ref mut expr) => {
-                    let ty = self.check_expr(expr, time)?;
+                    let ty = self.check_expr(expr, time, ctx)?;
                     result = ty;
                     remaining_stmts.push((stmt, span));
                 }
                 Stmt::Let(ref mut let_stmt) => {
-                    self.check_let_stmt(let_stmt, time)?;
+                    self.check_let_stmt(let_stmt, time, ctx)?;
                     remaining_stmts.push((stmt, span));
                 }
                 Stmt::Func(_) => {
@@ -114,7 +166,7 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
                         }
                         funcs
                     };
-                    self.check_funcs(contiguous_funcs, time)?;
+                    self.check_funcs(contiguous_funcs, time, ctx)?;
                 }
             }
         }
@@ -124,7 +176,12 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         Ok(result)
     }
 
-    fn check_funcs(&mut self, funcs: Vec<FuncStmt>, time: Time) -> Result<(), Error<'s>> {
+    fn check_funcs(
+        &mut self,
+        funcs: Vec<FuncStmt>,
+        time: Time,
+        ctx: Context,
+    ) -> Result<(), Error<'s>> {
         // A function's id is its index into `self.funcs`.
         // Assigning these ids is tricky because other functions may be given ids while we're type
         // checking the current function.
@@ -140,20 +197,30 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
             self.frame_mut(time).push_func(&func.var.name, id, ty);
         }
         for (id, func) in func_ids.into_iter().zip(funcs.into_iter()) {
-            self.check_func_stmt(func, id, time)?;
+            self.check_func_stmt(func, id, time, ctx)?;
         }
         Ok(())
     }
 
-    fn check_let_stmt(&mut self, let_stmt: &mut LetStmt, time: Time) -> Result<(), Error<'s>> {
+    fn check_let_stmt(
+        &mut self,
+        let_stmt: &mut LetStmt,
+        time: Time,
+        ctx: Context,
+    ) -> Result<(), Error<'s>> {
         span!(self.logger, Trace, "let", ("{}", let_stmt.var.name), {
-            self.check_let_stmt_impl(let_stmt, time)
+            self.check_let_stmt_impl(let_stmt, time, ctx)
         })
     }
 
-    fn check_let_stmt_impl(&mut self, let_stmt: &mut LetStmt, time: Time) -> Result<(), Error<'s>> {
+    fn check_let_stmt_impl(
+        &mut self,
+        let_stmt: &mut LetStmt,
+        time: Time,
+        ctx: Context,
+    ) -> Result<(), Error<'s>> {
         let time = time + let_stmt.time;
-        let ty = self.check_expr(&mut let_stmt.definition, time)?;
+        let ty = self.check_expr(&mut let_stmt.definition, time, ctx)?;
         self.frame_mut(time).push_var(&let_stmt.var.name, ty);
         Ok(())
     }
@@ -163,6 +230,7 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         mut func: FuncStmt,
         id: FuncId,
         time: Time,
+        ctx: Context,
     ) -> Result<(), Error<'s>> {
         span!(self.logger, Trace, "func", ("{}", func.var.name), {
             let time = time + func.time;
@@ -173,7 +241,12 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
                     .push_arg(&param.var.name, param.ty.clone());
             }
             self.stack_mut(time).push(StackFrame::new());
-            self.expect_block(&mut func.body, &func.return_type, time)?;
+            self.expect_block(
+                &mut func.body,
+                &func.return_type,
+                time,
+                ctx.with_return_type(&func.return_type),
+            )?;
             self.stack_mut(time).pop();
             self.frame_mut(time).end_block();
             self.funcs_mut(time)[id] = Some(func);
@@ -184,7 +257,12 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
 
     /// Type check the given expression, which must be from the `Source` that this `TypeChecker`
     /// was cosntructed from.
-    pub fn check_expr(&mut self, expr: &mut (Expr, Span), time: Time) -> Result<Type, Error<'s>> {
+    fn check_expr(
+        &mut self,
+        expr: &mut (Expr, Span),
+        time: Time,
+        ctx: Context,
+    ) -> Result<Type, Error<'s>> {
         if self.logger.enabled(Verbosity::Trace) {
             if let (Expr::Literal(literal), _) = expr {
                 let ty = self.check_literal(literal);
@@ -206,78 +284,92 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
                 Ok(ty)
             } else {
                 span!(self.logger, Trace, "expr", {
-                    let ty = self.check_expr_impl(expr, time)?;
+                    let ty = self.check_expr_impl(expr, time, ctx)?;
                     log!(self.logger, Trace, &expr.0);
                     log!(self.logger, Trace, "type", ("{}", ty));
                     Ok(ty)
                 })
             }
         } else {
-            self.check_expr_impl(expr, time)
+            self.check_expr_impl(expr, time, ctx)
         }
     }
 
-    pub fn check_expr_impl(
+    fn check_expr_impl(
         &mut self,
         expr: &mut (Expr, Span),
         time: Time,
+        ctx: Context,
     ) -> Result<Type, Error<'s>> {
         use ast::Binop::*;
         use ast::Unop::*;
         use Expr::*;
 
+        let span = expr.1;
         match &mut expr.0 {
-            Var(var_refn) => self.check_var_refn(var_refn, expr.1, time),
+            Var(var_refn) => self.check_var_refn(var_refn, span, time),
             Literal(literal) => Ok(self.check_literal(literal)),
             Unop(Not, x) => {
-                self.expect_expr(x, &Type::Bool, time)?;
+                self.expect_expr(x, &Type::Bool, time, ctx)?;
                 Ok(Type::Bool)
             }
             Binop(Add | Sub | Mul | Div, x, y) => {
-                self.expect_expr(x, &Type::Int, time)?;
-                self.expect_expr(y, &Type::Int, time)?;
+                self.expect_expr(x, &Type::Int, time, ctx)?;
+                self.expect_expr(y, &Type::Int, time, ctx)?;
                 Ok(Type::Int)
             }
             Binop(Eq | Ne | Lt | Le | Gt | Ge, x, y) => {
-                self.expect_expr(x, &Type::Int, time)?;
-                self.expect_expr(y, &Type::Int, time)?;
+                self.expect_expr(x, &Type::Int, time, ctx)?;
+                self.expect_expr(y, &Type::Int, time, ctx)?;
                 Ok(Type::Bool)
             }
             Binop(And | Or, x, y) => {
-                self.expect_expr(x, &Type::Bool, time)?;
-                self.expect_expr(y, &Type::Bool, time)?;
+                self.expect_expr(x, &Type::Bool, time, ctx)?;
+                self.expect_expr(y, &Type::Bool, time, ctx)?;
 
                 Ok(Type::Bool)
             }
-            If(if_expr) => self.check_if_expr(if_expr, expr.1, time),
-            Apply(apply_expr) => self.check_apply_expr(apply_expr, expr.1, time),
-            Block(block_expr) => self.check_block(&mut block_expr.block, time + block_expr.time),
-            ComptimeExpr(expr) => self.check_expr(expr, Comptime),
+            If(if_expr) => self.check_if_expr(if_expr, span, time, ctx),
+            Apply(apply_expr) => self.check_apply_expr(apply_expr, span, time, ctx),
+            Block(block_expr) => {
+                self.check_block(&mut block_expr.block, time + block_expr.time, ctx)
+            }
+            ComptimeExpr(expr) => self.check_expr(expr, Comptime, ctx),
+            Return(expr) => {
+                if let Some(return_ty) = &ctx.return_type {
+                    self.expect_expr(expr, return_ty, time, ctx)?;
+                    Ok(Type::Never)
+                } else {
+                    Err(error_return_outside_of_func(self.source, span))
+                }
+            }
         }
     }
 
-    pub fn check_if_expr(
+    fn check_if_expr(
         &mut self,
         if_expr: &mut IfExpr,
         span: Span,
         time: Time,
+        ctx: Context,
     ) -> Result<Type, Error<'s>> {
         let time = time + if_expr.time;
-        self.expect_expr(&mut if_expr.e_if, &Type::Bool, time)?;
-        let t_then = self.check_expr(&mut if_expr.e_then, time)?;
-        let t_else = self.check_expr(&mut if_expr.e_else, time)?;
-        if t_then == t_else {
-            Ok(t_else)
+        self.expect_expr(&mut if_expr.e_if, &Type::Bool, time, ctx)?;
+        let t_then = self.check_expr(&mut if_expr.e_then, time, ctx)?;
+        let t_else = self.check_expr(&mut if_expr.e_else, time, ctx)?;
+        if let Some(t_result) = t_then.unify(&t_else) {
+            Ok(t_result)
         } else {
             Err(error_branch_mismatch(self.source, &t_then, &t_else, span))
         }
     }
 
-    pub fn check_apply_expr(
+    fn check_apply_expr(
         &mut self,
         apply_expr: &mut ApplyExpr,
         span: Span,
         time: Time,
+        ctx: Context,
     ) -> Result<Type, Error<'s>> {
         let time = time + apply_expr.time;
         let func_type = self
@@ -292,12 +384,12 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
             ));
         }
         for (arg, param) in apply_expr.args.iter_mut().zip(func_type.params.iter()) {
-            self.expect_expr(arg, param, time)?;
+            self.expect_expr(arg, param, time, ctx)?;
         }
         Ok(func_type.return_type.deref().clone())
     }
 
-    pub fn check_literal(&mut self, literal: &Literal) -> Type {
+    fn check_literal(&mut self, literal: &Literal) -> Type {
         use Literal::*;
 
         match literal {
@@ -312,9 +404,10 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         expr: &'t mut (Expr, Span),
         expected: &'t Type,
         time: Time,
+        ctx: Context,
     ) -> Result<&'t Type, Error<'s>> {
-        let actual = self.check_expr(expr, time)?;
-        if &actual == expected {
+        let actual = self.check_expr(expr, time, ctx)?;
+        if actual.matches(expected) {
             Ok(expected)
         } else {
             Err(error_type_mismatch(self.source, &actual, expected, expr.1))
@@ -467,9 +560,10 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         block: &'t mut (Block, Span),
         expected: &'t Type,
         time: Time,
+        ctx: Context,
     ) -> Result<&'t Type, Error<'s>> {
-        let actual = self.check_block(block, time)?;
-        if &actual == expected {
+        let actual = self.check_block(block, time, ctx)?;
+        if actual.matches(expected) {
             Ok(expected)
         } else {
             Err(error_type_mismatch(self.source, &actual, expected, block.1))
@@ -523,6 +617,16 @@ fn error_wrong_num_args(source: &Source, expected: usize, actual: usize, span: S
     )
 }
 
+fn error_return_outside_of_func(source: &Source, span: Span) -> Error {
+    Error::new(
+        "Syntax Error",
+        source,
+        span,
+        "not inside a function",
+        "Return statement found outside of any function, but it's only meaningful inside of a function."
+    )
+}
+
 fn type_of_function(func: &FuncStmt) -> FuncType {
     FuncType {
         params: func.params.iter().map(|param| param.ty.clone()).collect(),
@@ -538,6 +642,7 @@ impl fmt::Display for Type {
             Unit => write!(f, "()"),
             Bool => write!(f, "Bool"),
             Int => write!(f, "Int"),
+            Never => write!(f, "Never"),
         }
     }
 }

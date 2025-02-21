@@ -64,6 +64,7 @@ pub enum Expr {
     Apply(ApplyExpr),
     Block(BlockExpr),
     ComptimeExpr(Box<(Expr, Span)>),
+    Return(Box<(Expr, Span)>),
 }
 
 #[derive(Debug)]

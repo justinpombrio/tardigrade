@@ -86,7 +86,7 @@ impl Format for FuncStmt {
             write!(f, ", {}: {}", param.var.name, param.ty)?;
         }
         write!(f, ")")?;
-        if self.return_type != Type::Unit {
+        if matches!(self.return_type, Type::Unit) {
             write!(f, " -> {}", self.return_type)?;
         }
         write!(f, " =")?;
@@ -149,6 +149,10 @@ impl Format for Expr {
                 write!(f, "#(")?;
                 expr.0.format(f, indentation, prec)?;
                 write!(f, ")")
+            }
+            Return(expr) => {
+                write!(f, "return ")?;
+                expr.0.format(f, indentation + 1, prec)
             }
         }
     }

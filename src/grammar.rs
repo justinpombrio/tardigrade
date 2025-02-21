@@ -4,7 +4,10 @@ use std::fmt;
 
 pub fn construct_grammar() -> PanfixParser {
     // The grammar is specified in source code, so any error in it is a bug.
-    construct_grammar_impl().unwrap()
+    match construct_grammar_impl() {
+        Ok(parser) => parser,
+        Err(err) => panic!("{}", err),
+    }
 }
 
 fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
@@ -13,7 +16,6 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
     grammar.regex("Int", r#"-?0|[1-9][0-9]*"#)?;
     grammar.regex("Var", r#"[_a-z][_0-9a-zA-Z]*"#)?;
     grammar.regex("VarCT", r#"#[_a-z][_0-9a-zA-Z]*"#)?;
-    grammar.string("Unit", "()")?;
     grammar.string("True", "true")?;
     grammar.string("False", "false")?;
 
@@ -25,6 +27,8 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
     grammar.op("Func", pattern!("func" "(" ")" "=" "end"))?;
     grammar.op("FuncCT", pattern!("#func" "(" ")" "=" "end"))?;
     grammar.op("Comptime", pattern!("#(" ")"))?;
+    grammar.op("If", pattern!("if" "then" "else" "end"))?;
+    grammar.op("IfCT", pattern!("#if" "then" "else" "end"))?;
     grammar.op("Parens", pattern!("(" ")"))?;
 
     grammar.right_assoc();
@@ -56,14 +60,13 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
     grammar.op("Or", pattern!(_ "or" _))?;
 
     grammar.right_assoc();
+    grammar.op("Return", pattern!("return" _))?;
+
+    grammar.right_assoc();
     grammar.op("Arrow", pattern!("->" _))?;
 
     grammar.right_assoc();
     grammar.op("Colon", pattern!(_ ":" _))?;
-
-    grammar.right_assoc();
-    grammar.op("If", pattern!("if" "then" "else" "end"))?;
-    grammar.op("IfCT", pattern!("#if" "then" "else" "end"))?;
 
     grammar.right_assoc();
     grammar.op("Comma", pattern!(_ "," _))?;
@@ -112,11 +115,13 @@ pub enum ExprToken {
     Apply,
     EUnop(Unop),
     EBinop(Binop),
+    Parens,
     If,
     IfCT,
     Block,
     BlockCT,
     Comptime,
+    Return,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +167,7 @@ impl ExprToken {
             "Var" => Var,
             "VarCT" => VarCT,
             "Apply" => Apply,
+            "Parens" => Parens,
             "If" => If,
             "IfCT" => IfCT,
             "Not" => EUnop(Unop::Not),
@@ -180,6 +186,7 @@ impl ExprToken {
             "Block" => Block,
             "BlockCT" => BlockCT,
             "Comptime" => Comptime,
+            "Return" => Return,
             other => panic!("Bug in parser: missing token {}", other),
         }
     }

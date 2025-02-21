@@ -1,3 +1,9 @@
+TEST unit
+    ()
+EXPECT
+    ()
+END
+
 TEST addition
     2 + 3
 EXPECT
