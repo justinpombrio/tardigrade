@@ -247,6 +247,14 @@ impl Parser {
                 let right = self.parse_expr_with_span(v.child(1), time)?;
                 Ok(Expr::Binop(binop, Box::new(left), Box::new(right)))
             }
+            ExprToken::Parens => {
+                if self.token(v.child(0)) == Token::Blank {
+                    Ok(Expr::Literal(Literal::Unit))
+                } else {
+                    let expr = self.parse_expr_with_span(v.child(0), time)?;
+                    Ok(expr.0)
+                }
+            }
             ExprToken::If => {
                 let if_expr = self.parse_if_expr(v, time, Runtime)?;
                 Ok(Expr::If(if_expr))
@@ -271,6 +279,10 @@ impl Parser {
                 let time = self.combine_times(v, time, Comptime)?;
                 let expr = self.parse_expr_with_span(v.child(0), time)?;
                 Ok(Expr::ComptimeExpr(Box::new(expr)))
+            }
+            ExprToken::Return => {
+                let expr = self.parse_expr_with_span(v.child(0), time)?;
+                Ok(Expr::Return(Box::new(expr)))
             }
         }
     }

@@ -1,0 +1,27 @@
+// TODO: use `set` instead, once that exists
+TEST return
+    func triangularNum(n: Int) -> Int =
+        func recur(n: Int, sum: Int) -> Int =
+            if n == 0 then
+                return sum
+            else
+                recur(n - 1, sum + n)
+            end
+        end
+
+        recur(n, 0)
+    end
+
+    triangularNum(5)
+EXPECT
+    15
+END
+
+TEST return_return
+    func f() -> Bool =
+        return 0 > return true
+    end
+    f()
+EXPECT
+    true
+END
