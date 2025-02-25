@@ -1,8 +1,8 @@
 //! Parse an AST out of a token tree. Error on redundant nested comptimes.
 
 use crate::ast::{
-    ApplyExpr, Block, BlockExpr, Expr, FuncRefn, FuncStmt, IfExpr, LetStmt, Literal, Param, Span,
-    Stmt, Time, Var, VarRefn,
+    ApplyExpr, Block, BlockExpr, Expr, FuncRefn, FuncStmt, IfExpr, LetStmt, Literal, Param,
+    SetStmt, Span, Stmt, Time, Var, VarRefn,
 };
 use crate::error::Error;
 use crate::grammar::{construct_grammar, ExprToken, LiteralToken, StmtToken, Token, TypeToken};
@@ -92,6 +92,8 @@ impl Parser {
         match token {
             StmtToken::Let => Ok(Stmt::Let(self.parse_let(v, time, Runtime)?)),
             StmtToken::LetCT => Ok(Stmt::Let(self.parse_let(v, time, Comptime)?)),
+            StmtToken::Set => Ok(Stmt::Set(self.parse_set(v, time, Runtime)?)),
+            StmtToken::SetCT => Ok(Stmt::Set(self.parse_set(v, time, Comptime)?)),
             StmtToken::Func => Ok(Stmt::Func(self.parse_func(v, time, Runtime)?)),
             StmtToken::FuncCT => Ok(Stmt::Func(self.parse_func(v, time, Comptime)?)),
         }
@@ -110,6 +112,24 @@ impl Parser {
             var,
             definition,
             time: let_time,
+        })
+    }
+
+    fn parse_set<'s>(
+        &self,
+        v: Visitor<'s, '_, '_>,
+        time: Time,
+        set_time: Time,
+    ) -> Result<SetStmt, Error<'s>> {
+        let time = self.combine_times(v, time, set_time)?;
+        let (var_name, var_time) = self.parse_refn(v.child(0), "variable name", time)?;
+        let var_span = v.child(0).span();
+        let var = VarRefn::new(var_name, var_time);
+        let definition = self.parse_expr_with_span(v.child(1), time)?;
+        Ok(SetStmt {
+            var: (var, var_span),
+            definition,
+            time: set_time,
         })
     }
 
@@ -326,8 +346,8 @@ impl Parser {
         if_time: Time,
     ) -> Result<IfExpr, Error<'s>> {
         let e_if = self.parse_expr_with_span(v.child(0), time + if_time)?;
-        let e_then = self.parse_expr_with_span(v.child(1), time)?;
-        let e_else = self.parse_expr_with_span(v.child(2), time)?;
+        let e_then = self.parse_block_with_span(v.child(1), time)?;
+        let e_else = self.parse_block_with_span(v.child(2), time)?;
         Ok(IfExpr {
             e_if: Box::new(e_if),
             e_then: Box::new(e_then),

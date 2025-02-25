@@ -1,0 +1,7 @@
+- [x] variable assignment
+- [ ] for loops
+- [ ] linear types
+- [ ] references
+- [ ] monomorphization
+- [ ] dependent types
+- [ ] coroutines/callbacks/similar

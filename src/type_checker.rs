@@ -1,6 +1,6 @@
 use crate::ast::{
-    self, ApplyExpr, Block, Expr, FuncId, FuncRefn, FuncStmt, IfExpr, LetStmt, Literal, Span, Stmt,
-    Time, VarRefn,
+    self, ApplyExpr, Block, Expr, FuncId, FuncRefn, FuncStmt, IfExpr, LetStmt, Literal, SetStmt,
+    Span, Stmt, Time, VarRefn,
 };
 use crate::error::Error;
 use crate::logger::{Logger, Verbosity};
@@ -149,6 +149,10 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
                     self.check_let_stmt(let_stmt, time, ctx)?;
                     remaining_stmts.push((stmt, span));
                 }
+                Stmt::Set(ref mut set_stmt) => {
+                    self.check_set_stmt(set_stmt, span, time, ctx)?;
+                    remaining_stmts.push((stmt, span));
+                }
                 Stmt::Func(_) => {
                     let contiguous_funcs = {
                         let func = match stmt {
@@ -223,6 +227,40 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         let ty = self.check_expr(&mut let_stmt.definition, time, ctx)?;
         self.frame_mut(time).push_var(&let_stmt.var.name, ty);
         Ok(())
+    }
+
+    fn check_set_stmt(
+        &mut self,
+        set_stmt: &mut SetStmt,
+        span: Span,
+        time: Time,
+        ctx: Context,
+    ) -> Result<(), Error<'s>> {
+        span!(self.logger, Trace, "let", ("{}", set_stmt.var.0.name), {
+            self.check_set_stmt_impl(set_stmt, span, time, ctx)
+        })
+    }
+
+    fn check_set_stmt_impl(
+        &mut self,
+        set_stmt: &mut SetStmt,
+        span: Span,
+        time: Time,
+        ctx: Context,
+    ) -> Result<(), Error<'s>> {
+        let time = time + set_stmt.time;
+        let new_ty = self.check_expr(&mut set_stmt.definition, time, ctx)?;
+        let old_ty = self.check_var_refn(&mut set_stmt.var.0, set_stmt.var.1, time)?;
+        if new_ty.matches(&old_ty) {
+            Ok(())
+        } else {
+            Err(error_type_mismatch(
+                self.source,
+                &new_ty,
+                &old_ty,
+                set_stmt.definition.1,
+            ))
+        }
     }
 
     fn check_func_stmt(
@@ -355,8 +393,8 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
     ) -> Result<Type, Error<'s>> {
         let time = time + if_expr.time;
         self.expect_expr(&mut if_expr.e_if, &Type::Bool, time, ctx)?;
-        let t_then = self.check_expr(&mut if_expr.e_then, time, ctx)?;
-        let t_else = self.check_expr(&mut if_expr.e_else, time, ctx)?;
+        let t_then = self.check_block(&mut if_expr.e_then, time, ctx)?;
+        let t_else = self.check_block(&mut if_expr.e_else, time, ctx)?;
         if let Some(t_result) = t_then.unify(&t_else) {
             Ok(t_result)
         } else {

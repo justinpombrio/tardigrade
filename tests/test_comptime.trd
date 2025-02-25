@@ -5,7 +5,9 @@ TEST ct_if
         3 + 4
     end
 EXPECT compile
-    1 + 2
+    block
+        1 + 2
+    end
 EXPECT run
     3
 END

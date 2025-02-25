@@ -1,5 +1,5 @@
-syn keyword kw func if then else and or is do while for break continue not let case end
-syn keyword kw block return
+syn keyword kw func if then else and or is do while for break continue not let set
+syn keyword kw case end block return
 syn match kw "->"
 syn match kw "="
 syn match punct "[\[\](){};,]"

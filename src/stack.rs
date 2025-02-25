@@ -85,6 +85,15 @@ impl<T: Debug + Display> Stack<T> {
         self.get_item(frame, offset)
     }
 
+    #[track_caller]
+    pub fn lookup_mut(&mut self, depth: usize, offset: isize) -> &mut T {
+        let mut frame = self.frame;
+        for _ in 0..depth {
+            frame = self.enclosing_frame(frame);
+        }
+        self.get_item_mut(frame, offset)
+    }
+
     pub fn verify_empty(&self) {
         if !self.entries.is_empty() {
             eprintln!("{}", self);
@@ -114,6 +123,15 @@ impl<T: Debug + Display> Stack<T> {
     fn get_item(&self, index: usize, offset: isize) -> &T {
         let index = (index as isize + offset) as usize;
         match &self.entries[index] {
+            StackEntry::Item(value) => value,
+            StackEntry::Link(_) => panic!("Stack: expected Item, found Link"),
+        }
+    }
+
+    #[track_caller]
+    fn get_item_mut(&mut self, index: usize, offset: isize) -> &mut T {
+        let index = (index as isize + offset) as usize;
+        match &mut self.entries[index] {
             StackEntry::Item(value) => value,
             StackEntry::Link(_) => panic!("Stack: expected Item, found Link"),
         }
