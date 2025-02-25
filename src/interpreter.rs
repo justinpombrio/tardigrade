@@ -1,6 +1,6 @@
 use crate::ast::{
-    self, ApplyExpr, Block, BlockExpr, Expr, FuncStmt, IfExpr, LetStmt, Literal, Span, Stmt, Time,
-    Value, VarRefn,
+    self, ApplyExpr, Block, BlockExpr, Expr, FuncStmt, IfExpr, LetStmt, Literal, SetStmt, Span,
+    Stmt, Time, Value, VarRefn,
 };
 use crate::error::Error;
 use crate::logger::{Logger, Verbosity};
@@ -102,6 +102,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
                     stmts.push((Expr(rt_expr), expr.1));
                 }
                 Let(let_stmt) => self.compile_let(let_stmt, stmt.1, &mut stmts)?,
+                Set(set_stmt) => self.compile_set(set_stmt, stmt.1, &mut stmts)?,
                 Func(_) => {
                     panic!("compile: leftover function");
                 }
@@ -142,6 +143,32 @@ impl<'s, 'l> Interpreter<'s, 'l> {
                         time: Runtime,
                     };
                     stmts.push((Stmt::Let(rt_let), span));
+                    Ok(())
+                }
+            }
+        })
+    }
+
+    fn compile_set(
+        &mut self,
+        set_stmt: &'s SetStmt,
+        span: Span,
+        stmts: &mut Vec<(Stmt, Span)>,
+    ) -> EvalResult<'s, ()> {
+        span!(self.logger, Trace, "set", ("{}", set_stmt.var.0.name), {
+            match set_stmt.time {
+                Comptime => {
+                    self.eval_set(set_stmt)?;
+                    Ok(())
+                }
+                Runtime => {
+                    let definition = self.compile_expr(&set_stmt.definition)?;
+                    let rt_set = SetStmt {
+                        var: set_stmt.var.clone(),
+                        definition,
+                        time: Runtime,
+                    };
+                    stmts.push((Stmt::Set(rt_set), span));
                     Ok(())
                 }
             }
@@ -215,16 +242,21 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         match if_expr.time {
             Comptime => {
                 let cond = self.eval_expr(&if_expr.e_if)?.unwrap_bool();
-                if cond {
-                    self.compile_expr(&if_expr.e_then)
+                let block = if cond {
+                    self.compile_block(&if_expr.e_then)?
                 } else {
-                    self.compile_expr(&if_expr.e_else)
-                }
+                    self.compile_block(&if_expr.e_else)?
+                };
+                let block_expr = BlockExpr {
+                    block: Box::new(block),
+                    time: Runtime,
+                };
+                Ok((Expr::Block(block_expr), span))
             }
             Runtime => {
                 let e_if = self.compile_expr(&if_expr.e_if)?;
-                let e_then = self.compile_expr(&if_expr.e_then)?;
-                let e_else = self.compile_expr(&if_expr.e_else)?;
+                let e_then = self.compile_block(&if_expr.e_then)?;
+                let e_else = self.compile_block(&if_expr.e_else)?;
                 let rt_if_expr = IfExpr {
                     e_if: Box::new(e_if),
                     e_then: Box::new(e_then),
@@ -325,9 +357,8 @@ impl<'s, 'l> Interpreter<'s, 'l> {
                 Expr(e) => {
                     result = self.eval_expr(e)?;
                 }
-                Let(let_stmt) => {
-                    self.eval_let(let_stmt)?;
-                }
+                Let(let_stmt) => self.eval_let(let_stmt)?,
+                Set(set_stmt) => self.eval_set(set_stmt)?,
                 Func(_) => {
                     panic!("eval: leftover function");
                 }
@@ -341,6 +372,22 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         span!(self.logger, Trace, "let", ("{}", let_stmt.var.name), {
             let value = self.eval_expr(&let_stmt.definition)?;
             self.stack.push(value);
+            Ok(())
+        })
+    }
+
+    fn eval_set(&mut self, set_stmt: &'s SetStmt) -> EvalResult<'s, ()> {
+        span!(self.logger, Trace, "set", ("{}", set_stmt.var.0.name), {
+            let var = &set_stmt.var.0;
+            let (depth, offset) = (var.unwrap_depth(), var.unwrap_offset());
+            log!(
+                self.logger,
+                Trace,
+                "var",
+                ("{} depth:{} offset:{}", var.name, depth, offset)
+            );
+            let value = self.eval_expr(&set_stmt.definition)?;
+            *self.stack.lookup_mut(depth, offset) = value;
             Ok(())
         })
     }
@@ -423,9 +470,9 @@ impl<'s, 'l> Interpreter<'s, 'l> {
     fn eval_if_expr(&mut self, expr: &'s IfExpr) -> EvalResult<'s, Value> {
         let b = self.eval_expr(&expr.e_if)?.unwrap_bool();
         if b {
-            self.eval_expr(&expr.e_then)
+            self.eval_block(&expr.e_then)
         } else {
-            self.eval_expr(&expr.e_else)
+            self.eval_block(&expr.e_else)
         }
     }
 

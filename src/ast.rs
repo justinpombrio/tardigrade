@@ -27,6 +27,7 @@ pub struct Block(pub Vec<(Stmt, Span)>);
 #[derive(Debug)]
 pub enum Stmt {
     Let(LetStmt),
+    Set(SetStmt),
     Func(FuncStmt),
     Expr((Expr, Span)),
 }
@@ -34,6 +35,13 @@ pub enum Stmt {
 #[derive(Debug)]
 pub struct LetStmt {
     pub var: Var,
+    pub definition: (Expr, Span),
+    pub time: Time,
+}
+
+#[derive(Debug)]
+pub struct SetStmt {
+    pub var: (VarRefn, Span),
     pub definition: (Expr, Span),
     pub time: Time,
 }
@@ -77,8 +85,8 @@ pub struct ApplyExpr {
 #[derive(Debug)]
 pub struct IfExpr {
     pub e_if: Box<(Expr, Span)>,
-    pub e_then: Box<(Expr, Span)>,
-    pub e_else: Box<(Expr, Span)>,
+    pub e_then: Box<(Block, Span)>,
+    pub e_else: Box<(Block, Span)>,
     pub time: Time,
 }
 

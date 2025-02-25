@@ -1,5 +1,5 @@
 use crate::ast::{
-    ApplyExpr, Binop, Block, Expr, FuncStmt, IfExpr, LetStmt, Prec, Stmt, Time, Unop,
+    ApplyExpr, Binop, Block, Expr, FuncStmt, IfExpr, LetStmt, Prec, SetStmt, Stmt, Time, Unop,
 };
 use crate::type_checker::Type;
 use std::fmt;
@@ -57,6 +57,7 @@ impl Format for Stmt {
         match self {
             Expr(expr) => expr.0.format(f, indentation, prec),
             Let(let_stmt) => let_stmt.format(f, indentation, prec),
+            Set(set_stmt) => set_stmt.format(f, indentation, prec),
             Func(func_stmt) => func_stmt.format(f, indentation, prec),
         }
     }
@@ -68,6 +69,16 @@ impl Format for LetStmt {
             write!(f, "#")?;
         }
         write!(f, "let {} = ", self.var.name)?;
+        self.definition.0.format(f, indentation + 1, Prec::MAX)
+    }
+}
+
+impl Format for SetStmt {
+    fn format(&self, f: &mut impl fmt::Write, indentation: u32, _prec: Prec) -> fmt::Result {
+        if self.time == Time::Comptime {
+            write!(f, "#")?;
+        }
+        write!(f, "set {} = ", self.var.0.name)?;
         self.definition.0.format(f, indentation + 1, Prec::MAX)
     }
 }

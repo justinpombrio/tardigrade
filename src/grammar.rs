@@ -74,6 +74,8 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
     grammar.right_assoc();
     grammar.op("Let", pattern!("let" "=" _))?;
     grammar.op("LetCT", pattern!("#let" "=" _))?;
+    grammar.op("Set", pattern!("set" "=" _))?;
+    grammar.op("SetCT", pattern!("#set" "=" _))?;
 
     grammar.right_assoc();
     grammar.juxtapose()?;
@@ -97,6 +99,8 @@ pub enum Token {
 pub enum StmtToken {
     Let,
     LetCT,
+    Set,
+    SetCT,
     Func,
     FuncCT,
 }
@@ -146,6 +150,8 @@ impl Token {
             "Arrow" => Arrow,
             "Let" => Stmt(StmtToken::Let),
             "LetCT" => Stmt(StmtToken::LetCT),
+            "Set" => Stmt(StmtToken::Set),
+            "SetCT" => Stmt(StmtToken::SetCT),
             "Func" => Stmt(StmtToken::Func),
             "FuncCT" => Stmt(StmtToken::FuncCT),
             "TypeBool" => Type(TypeToken::Bool),
@@ -205,6 +211,8 @@ impl fmt::Display for Token {
             Arrow => write!(f, "'->'"),
             Stmt(Let) => write!(f, "let statement"),
             Stmt(LetCT) => write!(f, "comptime let statement"),
+            Stmt(Set) => write!(f, "set statement"),
+            Stmt(SetCT) => write!(f, "comptime set statement"),
             Stmt(Func) => write!(f, "function definition"),
             Stmt(FuncCT) => write!(f, "comptime function definition"),
             Type(_) => write!(f, "type"),
