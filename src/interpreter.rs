@@ -115,7 +115,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
     fn compile_func(&mut self, func: &'s FuncStmt) -> EvalResult<'s, FuncStmt> {
         let body = self.compile_block(&func.body)?;
         Ok(FuncStmt {
-            var: func.var.clone(),
+            name: func.name.clone(),
             params: func.params.clone(),
             return_type: func.return_type.clone(),
             body,
@@ -129,7 +129,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         span: Span,
         stmts: &mut Vec<(Stmt, Span)>,
     ) -> EvalResult<'s, ()> {
-        span!(self.logger, Trace, "let", ("{}", let_stmt.var.name), {
+        span!(self.logger, Trace, "let", ("{}", let_stmt.name), {
             match let_stmt.time {
                 Comptime => {
                     self.eval_let(let_stmt)?;
@@ -138,7 +138,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
                 Runtime => {
                     let definition = self.compile_expr(&let_stmt.definition)?;
                     let rt_let = LetStmt {
-                        var: let_stmt.var.clone(),
+                        name: let_stmt.name.clone(),
                         definition,
                         time: Runtime,
                     };
@@ -369,7 +369,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
     }
 
     fn eval_let(&mut self, let_stmt: &'s LetStmt) -> EvalResult<'s, ()> {
-        span!(self.logger, Trace, "let", ("{}", let_stmt.var.name), {
+        span!(self.logger, Trace, "let", ("{}", let_stmt.name), {
             let value = self.eval_expr(&let_stmt.definition)?;
             self.stack.push(value);
             Ok(())

@@ -150,7 +150,7 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
                     remaining_stmts.push((stmt, span));
                 }
                 Stmt::Set(ref mut set_stmt) => {
-                    self.check_set_stmt(set_stmt, span, time, ctx)?;
+                    self.check_set_stmt(set_stmt, time, ctx)?;
                     remaining_stmts.push((stmt, span));
                 }
                 Stmt::Func(_) => {
@@ -198,7 +198,7 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
             func_ids.push(id);
             self.funcs_mut(time).push(None);
             let ty = type_of_function(func);
-            self.frame_mut(time).push_func(&func.var.name, id, ty);
+            self.frame_mut(time).push_func(&func.name, id, ty);
         }
         for (id, func) in func_ids.into_iter().zip(funcs.into_iter()) {
             self.check_func_stmt(func, id, time, ctx)?;
@@ -212,7 +212,7 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         time: Time,
         ctx: Context,
     ) -> Result<(), Error<'s>> {
-        span!(self.logger, Trace, "let", ("{}", let_stmt.var.name), {
+        span!(self.logger, Trace, "let", ("{}", let_stmt.name), {
             self.check_let_stmt_impl(let_stmt, time, ctx)
         })
     }
@@ -225,26 +225,24 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
     ) -> Result<(), Error<'s>> {
         let time = time + let_stmt.time;
         let ty = self.check_expr(&mut let_stmt.definition, time, ctx)?;
-        self.frame_mut(time).push_var(&let_stmt.var.name, ty);
+        self.frame_mut(time).push_var(&let_stmt.name, ty);
         Ok(())
     }
 
     fn check_set_stmt(
         &mut self,
         set_stmt: &mut SetStmt,
-        span: Span,
         time: Time,
         ctx: Context,
     ) -> Result<(), Error<'s>> {
         span!(self.logger, Trace, "let", ("{}", set_stmt.var.0.name), {
-            self.check_set_stmt_impl(set_stmt, span, time, ctx)
+            self.check_set_stmt_impl(set_stmt, time, ctx)
         })
     }
 
     fn check_set_stmt_impl(
         &mut self,
         set_stmt: &mut SetStmt,
-        span: Span,
         time: Time,
         ctx: Context,
     ) -> Result<(), Error<'s>> {
@@ -270,13 +268,12 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         time: Time,
         ctx: Context,
     ) -> Result<(), Error<'s>> {
-        span!(self.logger, Trace, "func", ("{}", func.var.name), {
+        span!(self.logger, Trace, "func", ("{}", func.name), {
             let time = time + func.time;
             self.frame_mut(time).start_block();
             // TODO: check that function params are disjoint
             for param in &mut func.params {
-                self.frame_mut(time)
-                    .push_arg(&param.var.name, param.ty.clone());
+                self.frame_mut(time).push_arg(&param.name, param.ty.clone());
             }
             self.stack_mut(time).push(StackFrame::new());
             self.expect_block(
@@ -717,7 +714,7 @@ impl fmt::Display for TypeChecker<'_, '_> {
             writeln!(f, "  functions")?;
             for func in funcs {
                 if let Some(func) = func {
-                    writeln!(f, "    {}", func.var.name)?;
+                    writeln!(f, "    {}", func.name)?;
                 } else {
                     writeln!(f, "    None")?;
                 }

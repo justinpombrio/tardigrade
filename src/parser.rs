@@ -2,7 +2,7 @@
 
 use crate::ast::{
     ApplyExpr, Block, BlockExpr, Expr, FuncRefn, FuncStmt, IfExpr, LetStmt, Literal, Param,
-    SetStmt, Span, Stmt, Time, Var, VarRefn,
+    SetStmt, Span, Stmt, Time, VarRefn,
 };
 use crate::error::Error;
 use crate::grammar::{construct_grammar, ExprToken, LiteralToken, StmtToken, Token, TypeToken};
@@ -106,10 +106,17 @@ impl Parser {
         let_time: Time,
     ) -> Result<LetStmt, Error<'s>> {
         let time = self.combine_times(v, time, let_time)?;
-        let var = self.parse_var(v.child(0))?;
+        let (name, name_time) = self.parse_var(v.child(0))?;
+        match name_time {
+            Runtime => (),
+            Comptime => return Err(self.error_unexpected_comptime_var(
+                v.child(0),
+                "A let variable can't be marked as comptime with `#`. Did you mean to say `#let`?",
+            )),
+        }
         let definition = self.parse_expr_with_span(v.child(1), time)?;
         Ok(LetStmt {
-            var,
+            name,
             definition,
             time: let_time,
         })
@@ -122,7 +129,7 @@ impl Parser {
         set_time: Time,
     ) -> Result<SetStmt, Error<'s>> {
         let time = self.combine_times(v, time, set_time)?;
-        let (var_name, var_time) = self.parse_refn(v.child(0), "variable name", time)?;
+        let (var_name, var_time) = self.parse_ident(v.child(0), "variable name", time)?;
         let var_span = v.child(0).span();
         let var = VarRefn::new(var_name, var_time);
         let definition = self.parse_expr_with_span(v.child(1), time)?;
@@ -140,12 +147,21 @@ impl Parser {
         func_time: Time,
     ) -> Result<FuncStmt, Error<'s>> {
         let time = self.combine_times(v, time, func_time)?;
-        let var = self.parse_var(v.child(0))?;
+        let (name, name_time) = self.parse_var(v.child(0))?;
+        match name_time {
+            Runtime => (),
+            Comptime => {
+                return Err(self.error_unexpected_comptime_var(
+                    v.child(0),
+                    "A function name can't be marked as comptime with `#`. Did you mean to say `#func`?",
+                ))
+            }
+        }
         let params = self.parse_params(v.child(1))?;
         let return_type = self.parse_return_type(v.child(2))?;
         let body = self.parse_block_with_span(v.child(3), time)?;
         Ok(FuncStmt {
-            var,
+            name: name.to_owned(),
             params,
             return_type,
             body,
@@ -176,9 +192,18 @@ impl Parser {
     fn parse_param<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<Param, Error<'s>> {
         match self.token(v) {
             Token::Colon => {
-                let var = self.parse_var(v.child(0))?;
+                let (name, name_time) = self.parse_var(v.child(0))?;
+                match name_time {
+                    Runtime => (),
+                    Comptime => {
+                        return Err(self.error_unexpected_comptime_var(
+                            v.child(0),
+                            "A function parameter can't be marked as comptime with `#`.",
+                        ))
+                    }
+                }
                 let ty = self.parse_type(v.child(1))?;
-                Ok(Param { var, ty })
+                Ok(Param { name, ty })
             }
             _ => Err(self.error_expected(v, "function parameter")),
         }
@@ -200,7 +225,7 @@ impl Parser {
         Ok(args)
     }
 
-    fn parse_refn<'s>(
+    fn parse_ident<'s>(
         &self,
         v: Visitor<'s, '_, '_>,
         expected_msg: &str,
@@ -216,6 +241,14 @@ impl Parser {
                 Ok((&v.source()[1..], Comptime))
             }
             _ => Err(self.error_expected(v, expected_msg)),
+        }
+    }
+
+    fn parse_var<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<(String, Time), Error<'s>> {
+        match self.token(v) {
+            Token::Expr(ExprToken::VarCT) => Ok((v.source().to_owned(), Comptime)),
+            Token::Expr(ExprToken::Var) => Ok((v.source().to_owned(), Runtime)),
+            _ => Err(self.error_expected(v, "variable name")),
         }
     }
 
@@ -255,7 +288,7 @@ impl Parser {
                 Ok(Expr::Literal(literal))
             }
             ExprToken::Var | ExprToken::VarCT => {
-                let (var_name, var_time) = self.parse_refn(v, "variable name", time)?;
+                let (var_name, var_time) = self.parse_ident(v, "variable name", time)?;
                 Ok(Expr::Var(VarRefn::new(var_name, var_time)))
             }
             ExprToken::EUnop(unop) => {
@@ -361,7 +394,7 @@ impl Parser {
         v: Visitor<'s, '_, '_>,
         time: Time,
     ) -> Result<ApplyExpr, Error<'s>> {
-        let (func_name, func_time) = self.parse_refn(v.child(0), "function name", time)?;
+        let (func_name, func_time) = self.parse_ident(v.child(0), "function name", time)?;
         let func = FuncRefn::new(func_name);
         let func_span = v.child(0).span();
         let args = self.parse_args(v.child(1), time + func_time)?;
@@ -370,13 +403,6 @@ impl Parser {
             args,
             time: func_time,
         })
-    }
-
-    fn parse_var<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<Var, Error<'s>> {
-        match self.token(v) {
-            Token::Expr(ExprToken::Var) => Ok(Var::new(v.source())),
-            _ => Err(self.error_expected(v, "variable name")),
-        }
     }
 
     fn token(&self, v: Visitor) -> Token {
@@ -409,6 +435,10 @@ impl Parser {
             (Comptime, Runtime) | (Runtime, Comptime) => Ok(Comptime),
             (Comptime, Comptime) => Err(self.error_nested_comptime(v)),
         }
+    }
+
+    fn error_unexpected_comptime_var<'s>(&self, v: Visitor<'s, '_, '_>, msg: &str) -> Error<'s> {
+        self.error(v, "unexpected comptime", msg)
     }
 
     fn error_nested_comptime<'s>(&self, v: Visitor<'s, '_, '_>) -> Error<'s> {

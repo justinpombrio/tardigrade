@@ -16,11 +16,6 @@ pub enum Time {
     Comptime,
 }
 
-#[derive(Debug, Clone)]
-pub struct Var {
-    pub name: String,
-}
-
 #[derive(Debug)]
 pub struct Block(pub Vec<(Stmt, Span)>);
 
@@ -34,7 +29,7 @@ pub enum Stmt {
 
 #[derive(Debug)]
 pub struct LetStmt {
-    pub var: Var,
+    pub name: String,
     pub definition: (Expr, Span),
     pub time: Time,
 }
@@ -48,13 +43,13 @@ pub struct SetStmt {
 
 #[derive(Debug, Clone)]
 pub struct Param {
-    pub var: Var,
+    pub name: String,
     pub ty: Type,
 }
 
 #[derive(Debug)]
 pub struct FuncStmt {
-    pub var: Var,
+    pub name: String,
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: (Block, Span),
@@ -176,14 +171,6 @@ impl FuncRefn {
 
     pub fn unwrap_id(&self) -> FuncId {
         self.id.expect("FuncRefn.id not set during type checking")
-    }
-}
-
-impl Var {
-    pub fn new(name: &str) -> Var {
-        Var {
-            name: name.to_owned(),
-        }
     }
 }
 
