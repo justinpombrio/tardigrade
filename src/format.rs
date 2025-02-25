@@ -68,7 +68,7 @@ impl Format for LetStmt {
         if self.time == Time::Comptime {
             write!(f, "#")?;
         }
-        write!(f, "let {} = ", self.var.name)?;
+        write!(f, "let {} = ", self.name)?;
         self.definition.0.format(f, indentation + 1, Prec::MAX)
     }
 }
@@ -88,13 +88,13 @@ impl Format for FuncStmt {
         if self.time == Time::Comptime {
             write!(f, "#")?;
         }
-        write!(f, "func {}(", self.var.name)?;
+        write!(f, "func {}(", self.name)?;
         let mut params = self.params.iter();
         if let Some(param) = params.next() {
-            write!(f, "{}: {}", param.var.name, param.ty)?;
+            write!(f, "{}: {}", param.name, param.ty)?;
         }
         for param in params {
-            write!(f, ", {}: {}", param.var.name, param.ty)?;
+            write!(f, ", {}: {}", param.name, param.ty)?;
         }
         write!(f, ")")?;
         if matches!(self.return_type, Type::Unit) {
