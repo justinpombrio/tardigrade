@@ -31,14 +31,17 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
     grammar.op("IfCT", pattern!("#if" "then" "else" "end"))?;
     grammar.op("Parens", pattern!("(" ")"))?;
 
-    grammar.right_assoc();
+    grammar.left_assoc();
+    grammar.op("Dot", pattern!(_ "." _))?;
+
+    grammar.left_assoc();
     grammar.op("Apply", pattern!(_ "(" ")"))?;
 
-    grammar.right_assoc();
+    grammar.left_assoc();
     grammar.op("Mul", pattern!(_ "*" _))?;
     grammar.op("Div", pattern!(_ "/" _))?;
 
-    grammar.right_assoc();
+    grammar.left_assoc();
     grammar.op("Add", pattern!(_ "+" _))?;
     grammar.op("Sub", pattern!(_ "-" _))?;
 
@@ -50,22 +53,22 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
     grammar.op("Gt", pattern!(_ ">" _))?;
     grammar.op("Ge", pattern!(_ ">=" _))?;
 
-    grammar.right_assoc();
+    grammar.left_assoc();
     grammar.op("Not", pattern!("not" _))?;
 
-    grammar.right_assoc();
+    grammar.left_assoc();
     grammar.op("And", pattern!(_ "and" _))?;
 
-    grammar.right_assoc();
+    grammar.left_assoc();
     grammar.op("Or", pattern!(_ "or" _))?;
 
-    grammar.right_assoc();
+    grammar.left_assoc();
     grammar.op("Return", pattern!("return" _))?;
 
-    grammar.right_assoc();
+    grammar.left_assoc();
     grammar.op("Arrow", pattern!("->" _))?;
 
-    grammar.right_assoc();
+    grammar.left_assoc();
     grammar.op("Colon", pattern!(_ ":" _))?;
 
     grammar.right_assoc();
@@ -116,6 +119,7 @@ pub enum ExprToken {
     Literal(LiteralToken),
     Var,
     VarCT,
+    Dot,
     Apply,
     EUnop(Unop),
     EBinop(Binop),
@@ -130,7 +134,6 @@ pub enum ExprToken {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiteralToken {
-    Unit,
     True,
     False,
     Int,
@@ -166,12 +169,12 @@ impl ExprToken {
         use ExprToken::*;
 
         match op_name {
-            "Unit" => Literal(LiteralToken::Unit),
             "True" => Literal(LiteralToken::True),
             "False" => Literal(LiteralToken::False),
             "Int" => Literal(LiteralToken::Int),
             "Var" => Var,
             "VarCT" => VarCT,
+            "Dot" => Dot,
             "Apply" => Apply,
             "Parens" => Parens,
             "If" => If,

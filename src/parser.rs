@@ -177,16 +177,8 @@ impl Parser {
         }
     }
 
-    fn parse_params<'s>(&self, mut v: Visitor<'s, '_, '_>) -> Result<Vec<Param>, Error<'s>> {
-        let mut params = Vec::new();
-        while self.token(v) == Token::Comma {
-            params.push(self.parse_param(v.child(0))?);
-            v = v.child(1);
-        }
-        if self.token(v) != Token::Blank {
-            params.push(self.parse_param(v)?);
-        }
-        Ok(params)
+    fn parse_params<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<Vec<Param>, Error<'s>> {
+        self.parse_comma_sep(v, |v| self.parse_param(v))
     }
 
     fn parse_param<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<Param, Error<'s>> {
@@ -211,18 +203,10 @@ impl Parser {
 
     fn parse_args<'s>(
         &self,
-        mut v: Visitor<'s, '_, '_>,
+        v: Visitor<'s, '_, '_>,
         time: Time,
     ) -> Result<Vec<(Expr, Span)>, Error<'s>> {
-        let mut args = Vec::new();
-        while self.token(v) == Token::Comma {
-            args.push(self.parse_expr_with_span(v.child(0), time)?);
-            v = v.child(1);
-        }
-        if self.token(v) != Token::Blank {
-            args.push(self.parse_expr_with_span(v, time)?);
-        }
-        Ok(args)
+        self.parse_comma_sep(v, |v| self.parse_expr_with_span(v, time))
     }
 
     fn parse_ident<'s>(
@@ -255,7 +239,17 @@ impl Parser {
     fn parse_type<'s>(&self, v: Visitor<'s, '_, '_>) -> Result<Type, Error<'s>> {
         match self.token(v) {
             // May need to distinguish the unit value from the unit type one day
-            Token::Expr(ExprToken::Literal(LiteralToken::Unit)) => Ok(Type::Unit),
+            Token::Expr(ExprToken::Parens) => {
+                let inner_token = self.token(v.child(0));
+                if inner_token == Token::Blank {
+                    Ok(Type::Unit)
+                } else if inner_token == Token::Comma {
+                    let elems = self.parse_comma_sep(v.child(0), |v| self.parse_type(v))?;
+                    Ok(Type::Tuple(elems))
+                } else {
+                    Err(self.error_expected(v, "type"))
+                }
+            }
             Token::Type(TypeToken::Bool) => Ok(Type::Bool),
             Token::Type(TypeToken::Int) => Ok(Type::Int),
             _ => Err(self.error_expected(v, "type")),
@@ -301,8 +295,13 @@ impl Parser {
                 Ok(Expr::Binop(binop, Box::new(left), Box::new(right)))
             }
             ExprToken::Parens => {
-                if self.token(v.child(0)) == Token::Blank {
+                let inner_token = self.token(v.child(0));
+                if inner_token == Token::Blank {
                     Ok(Expr::Literal(Literal::Unit))
+                } else if inner_token == Token::Comma {
+                    let elems =
+                        self.parse_comma_sep(v.child(0), |v| self.parse_expr_with_span(v, time))?;
+                    Ok(Expr::Tuple(elems))
                 } else {
                     let expr = self.parse_expr_with_span(v.child(0), time)?;
                     Ok(expr.0)
@@ -316,6 +315,7 @@ impl Parser {
                 let if_expr = self.parse_if_expr(v, time, Comptime)?;
                 Ok(Expr::If(if_expr))
             }
+            ExprToken::Dot => self.parse_dot_expr(v, time),
             ExprToken::Apply => {
                 let apply_expr = self.parse_apply_expr(v, time)?;
                 Ok(Expr::Apply(apply_expr))
@@ -346,7 +346,6 @@ impl Parser {
         token: LiteralToken,
     ) -> Result<Literal, Error<'s>> {
         match token {
-            LiteralToken::Unit => Ok(Literal::Unit),
             LiteralToken::True => Ok(Literal::Bool(true)),
             LiteralToken::False => Ok(Literal::Bool(false)),
             LiteralToken::Int => match v.source().parse::<i32>() {
@@ -389,6 +388,25 @@ impl Parser {
         })
     }
 
+    fn parse_dot_expr<'s>(&self, v: Visitor<'s, '_, '_>, time: Time) -> Result<Expr, Error<'s>> {
+        let v_expr = v.child(0);
+        let v_index = v.child(1);
+        let expr = self.parse_expr_with_span(v_expr, time)?;
+        match self.token(v.child(1)) {
+            Token::Expr(ExprToken::Literal(LiteralToken::Int)) => {
+                match v_index.source().parse::<u8>() {
+                    Ok(index) => Ok(Expr::TupleAccess(Box::new(expr), index)),
+                    Err(err) => Err(self.error(
+                        v_index,
+                        "invalid index",
+                        &format!("Invalid tuple index: '{}'", err),
+                    )),
+                }
+            }
+            _ => Err(self.error(v_index, "expected index", "Expected tuple index")),
+        }
+    }
+
     fn parse_apply_expr<'s>(
         &self,
         v: Visitor<'s, '_, '_>,
@@ -407,6 +425,22 @@ impl Parser {
 
     fn token(&self, v: Visitor) -> Token {
         Token::from_str(v.name())
+    }
+
+    fn parse_comma_sep<'s, T>(
+        &self,
+        mut v: Visitor<'s, '_, '_>,
+        parse_elem: impl Fn(Visitor<'s, '_, '_>) -> Result<T, Error<'s>>,
+    ) -> Result<Vec<T>, Error<'s>> {
+        let mut elems = Vec::new();
+        while self.token(v) == Token::Comma {
+            elems.push(parse_elem(v.child(0))?);
+            v = v.child(1);
+        }
+        if self.token(v) != Token::Blank {
+            elems.push(parse_elem(v)?);
+        }
+        Ok(elems)
     }
 
     #[allow(unused)] // likely to be used in the future

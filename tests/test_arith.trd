@@ -92,3 +92,15 @@ TEST conj precedence
 EXPECT
     true
 END
+
+TEST associativity_sub
+    6 - 5 - 4
+EXPECT
+    -3
+END
+
+TEST associativity_div
+    60 / 5 / 4
+EXPECT
+    3
+END

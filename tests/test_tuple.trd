@@ -1,0 +1,26 @@
+TEST tuple
+    (1 + 2, 3)
+EXPECT
+    (3, 3)
+END
+
+TEST tuple_access
+    let tuple = (1 + 2, 3 + 4)
+    tuple.1 - tuple.0 - 1
+EXPECT
+    3
+END
+
+TEST tuple_format
+    (1 + 2, 3 + 4).1
+EXPECT format
+    (1 + 2, 3 + 4).1
+END
+
+// TODO: Fix syntax so that you can write programs like this one
+// TEST tuple_syntax
+//     let tuple = (1, 2)
+//     (tuple.1, tuple.0)
+// EXPECT
+//     (2, 1)
+// END
