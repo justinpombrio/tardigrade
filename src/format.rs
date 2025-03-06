@@ -112,15 +112,21 @@ impl Format for FuncStmt {
 
 impl Format for Expr {
     fn format(&self, f: &mut impl fmt::Write, indentation: u32, prec: Prec) -> fmt::Result {
-        use crate::ast::Literal::*;
         use Expr::*;
 
         match self {
             Var(v) if v.time == Time::Comptime => write!(f, "#{}", v.name),
             Var(v) => write!(f, "{}", v.name),
-            Literal(Unit) => write!(f, "()"),
-            Literal(Bool(b)) => write!(f, "{}", b),
-            Literal(Int(n)) => write!(f, "{}", n),
+            Literal(lit) => write!(f, "{}", lit),
+            Tuple(elems) => {
+                write!(f, "(")?;
+                sep(f, elems.iter().map(|elem| &elem.0), ", ", indentation, prec)?;
+                write!(f, ")")
+            }
+            TupleAccess(expr, index) => {
+                expr.0.format(f, indentation, prec)?;
+                write!(f, ".{}", index)
+            }
             Unop(unop, x) => {
                 if unop.prec() > prec {
                     write!(f, "(")?;
@@ -198,16 +204,32 @@ impl Format for ApplyExpr {
             write!(f, "#")?;
         }
         write!(f, "{}(", self.func.0.name)?;
-        let mut args_iter = self.args.iter();
-        if let Some(first_arg) = args_iter.next() {
-            first_arg.0.format(f, indentation, prec)?;
-        }
-        for arg in args_iter {
-            write!(f, ", ")?;
-            arg.0.format(f, indentation, prec)?;
-        }
+        sep(
+            f,
+            self.args.iter().map(|arg| &arg.0),
+            ", ",
+            indentation,
+            prec,
+        )?;
         write!(f, ")")
     }
+}
+
+fn sep<T: Format>(
+    f: &mut impl fmt::Write,
+    mut elems: impl Iterator<Item = T>,
+    separator: &str,
+    indentation: u32,
+    prec: Prec,
+) -> fmt::Result {
+    if let Some(elem) = elems.next() {
+        elem.format(f, indentation + 1, prec)?;
+        for elem in elems {
+            write!(f, "{}", separator)?;
+            elem.format(f, indentation + 1, prec)?;
+        }
+    }
+    Ok(())
 }
 
 fn indent(f: &mut impl fmt::Write, indentation: u32) -> fmt::Result {

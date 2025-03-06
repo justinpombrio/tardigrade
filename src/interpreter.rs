@@ -215,6 +215,19 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         match &expr.0 {
             Var(var) => Ok(self.compile_var(var, span)?),
             Literal(literal) => Ok((Expr::Literal(literal.clone()), span)),
+            Tuple(elems) => Ok((
+                Expr::Tuple(
+                    elems
+                        .iter()
+                        .map(|elem| self.compile_expr(elem))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+                span,
+            )),
+            TupleAccess(tuple, index) => {
+                let rt_tuple = self.compile_expr(tuple)?;
+                Ok((Expr::TupleAccess(Box::new(rt_tuple), *index), span))
+            }
             Unop(unop, x) => {
                 let rt_x = self.compile_expr(x)?;
                 Ok((Unop(*unop, Box::new(rt_x)), span))
@@ -229,7 +242,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
             Block(block_expr) => self.compile_block_expr(block_expr, span),
             ComptimeExpr(expr) => {
                 let value = self.eval_expr(expr)?;
-                Ok((Expr::Literal(value.into_literal()), span))
+                Ok((value.as_expr(expr.1), span))
             }
             Return(expr) => {
                 let rt_expr = self.compile_expr(expr)?;
@@ -276,7 +289,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         match apply_expr.time {
             Comptime => {
                 let value = self.eval_apply_expr(apply_expr)?;
-                Ok((Expr::Literal(value.into_literal()), span))
+                Ok((value.as_expr(span), span))
             }
             Runtime => {
                 let rt_args = apply_expr
@@ -302,7 +315,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         match block_expr.time {
             Comptime => {
                 let value = self.eval_block(&block_expr.block)?;
-                Ok((Expr::Literal(value.into_literal()), span))
+                Ok((value.as_expr(span), span))
             }
             Runtime => {
                 let rt_block = self.compile_block(&block_expr.block)?;
@@ -320,7 +333,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
             Runtime => Ok((Expr::Var(var.clone()), span)),
             Comptime => {
                 let value = self.eval_var(var)?;
-                Ok((Expr::Literal(value.into_literal()), span))
+                Ok((value.as_expr(span), span))
             }
         }
     }
@@ -432,6 +445,16 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         match &expr.0 {
             Var(var) => self.eval_var(var),
             Literal(literal) => Ok(self.eval_literal(literal)),
+            Tuple(elems) => Ok(Value::tuple(
+                elems
+                    .iter()
+                    .map(|elem| self.eval_expr(elem))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            TupleAccess(tuple, index) => {
+                let tuple_value = self.eval_expr(tuple)?;
+                Ok(tuple_value.unwrap_tuple_elem(*index))
+            }
             Unop(Not, x) => self.apply_unop_b_b(x, |x| !x),
             Binop(Add, x, y) => self.apply_binop_ii_i(x, y, |x, y| x + y),
             Binop(Sub, x, y) => self.apply_binop_ii_i(x, y, |x, y| x - y),
@@ -499,13 +522,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
     }
 
     fn eval_literal(&mut self, literal: &Literal) -> Value {
-        use Literal::*;
-
-        match literal {
-            Unit => Value::unit(),
-            Bool(b) => Value::bool(*b),
-            Int(n) => Value::int(*n),
-        }
+        literal.clone().into_value()
     }
 
     fn eval_var(&mut self, var: &VarRefn) -> EvalResult<'s, Value> {

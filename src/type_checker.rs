@@ -31,10 +31,11 @@ struct StackFrame {
 
 #[derive(Debug, Clone)]
 pub enum Type {
+    Never,
     Unit,
     Bool,
     Int,
-    Never,
+    Tuple(Vec<Type>),
     // If extended, update unify() and matches()
 }
 
@@ -47,6 +48,18 @@ impl Type {
             (Unit, Unit) => Some(Unit),
             (Bool, Bool) => Some(Bool),
             (Int, Int) => Some(Int),
+            (Tuple(x), Tuple(y)) => {
+                if x.len() == y.len() {
+                    Some(Tuple(
+                        x.iter()
+                            .zip(y.iter())
+                            .map(|(x, y)| x.unify(y))
+                            .collect::<Option<Vec<Type>>>()?,
+                    ))
+                } else {
+                    None
+                }
+            }
             (_, _) => None,
         }
     }
@@ -59,6 +72,9 @@ impl Type {
             (Unit, Unit) => true,
             (Bool, Bool) => true,
             (Int, Int) => true,
+            (Tuple(x), Tuple(y)) => {
+                x.len() == y.len() && x.iter().zip(y.iter()).all(|(x, y)| x.matches(y))
+            }
             (_, _) => false,
         }
     }
@@ -254,9 +270,9 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         } else {
             Err(error_type_mismatch(
                 self.source,
+                set_stmt.definition.1,
                 &new_ty,
                 &old_ty,
-                set_stmt.definition.1,
             ))
         }
     }
@@ -344,6 +360,30 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         match &mut expr.0 {
             Var(var_refn) => self.check_var_refn(var_refn, span, time),
             Literal(literal) => Ok(self.check_literal(literal)),
+            Tuple(elems) => Ok(Type::Tuple(
+                elems
+                    .iter_mut()
+                    .map(|elem| self.check_expr(elem, time, ctx))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            TupleAccess(tuple, index) => {
+                let tuple_type = self.check_expr(tuple, time, ctx)?;
+                match tuple_type {
+                    Type::Tuple(mut elems) => {
+                        if (*index as usize) < elems.len() {
+                            Ok(elems.swap_remove(*index as usize))
+                        } else {
+                            Err(error_tuple_index_out_of_bounds(
+                                self.source,
+                                span,
+                                elems,
+                                *index,
+                            ))
+                        }
+                    }
+                    _ => Err(error_expected_tuple(self.source, tuple.1, tuple_type)),
+                }
+            }
             Unop(Not, x) => {
                 self.expect_expr(x, &Type::Bool, time, ctx)?;
                 Ok(Type::Bool)
@@ -395,7 +435,7 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         if let Some(t_result) = t_then.unify(&t_else) {
             Ok(t_result)
         } else {
-            Err(error_branch_mismatch(self.source, &t_then, &t_else, span))
+            Err(error_branch_mismatch(self.source, span, &t_then, &t_else))
         }
     }
 
@@ -413,9 +453,9 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         if func_type.params.len() != apply_expr.args.len() {
             return Err(error_wrong_num_args(
                 self.source,
+                span,
                 func_type.params.len(),
                 apply_expr.args.len(),
-                span,
             ));
         }
         for (arg, param) in apply_expr.args.iter_mut().zip(func_type.params.iter()) {
@@ -425,13 +465,7 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
     }
 
     fn check_literal(&mut self, literal: &Literal) -> Type {
-        use Literal::*;
-
-        match literal {
-            Unit => Type::Unit,
-            Bool(_) => Type::Bool,
-            Int(_) => Type::Int,
-        }
+        literal.type_of()
     }
 
     fn expect_expr<'t>(
@@ -445,7 +479,7 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         if actual.matches(expected) {
             Ok(expected)
         } else {
-            Err(error_type_mismatch(self.source, &actual, expected, expr.1))
+            Err(error_type_mismatch(self.source, expr.1, &actual, expected))
         }
     }
 
@@ -533,6 +567,21 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
         ))
     }
 
+    fn expect_block<'t>(
+        &mut self,
+        block: &'t mut (Block, Span),
+        expected: &'t Type,
+        time: Time,
+        ctx: Context,
+    ) -> Result<&'t Type, Error<'s>> {
+        let actual = self.check_block(block, time, ctx)?;
+        if actual.matches(expected) {
+            Ok(expected)
+        } else {
+            Err(error_type_mismatch(self.source, block.1, &actual, expected))
+        }
+    }
+
     /// Perform some sanity checks, then return a pair of all
     /// `(comptime_funcs, runtime_funcs)`, which have been pulled out of the AST.
     pub fn finish(self) -> (Vec<FuncStmt>, Vec<FuncStmt>) {
@@ -589,28 +638,13 @@ impl<'s, 'l> TypeChecker<'s, 'l> {
             .last_mut()
             .expect("Type Checking: missing stack frame")
     }
-
-    fn expect_block<'t>(
-        &mut self,
-        block: &'t mut (Block, Span),
-        expected: &'t Type,
-        time: Time,
-        ctx: Context,
-    ) -> Result<&'t Type, Error<'s>> {
-        let actual = self.check_block(block, time, ctx)?;
-        if actual.matches(expected) {
-            Ok(expected)
-        } else {
-            Err(error_type_mismatch(self.source, &actual, expected, block.1))
-        }
-    }
 }
 
 fn error_type_mismatch<'s>(
     source: &'s Source,
+    span: Span,
     actual: &Type,
     expected: &Type,
-    span: Span,
 ) -> Error<'s> {
     Error::new(
         "Type Error",
@@ -623,9 +657,9 @@ fn error_type_mismatch<'s>(
 
 fn error_branch_mismatch<'s>(
     source: &'s Source,
+    span: Span,
     type_1: &Type,
     type_2: &Type,
-    span: Span,
 ) -> Error<'s> {
     Error::new(
         "Type Error",
@@ -639,7 +673,7 @@ fn error_branch_mismatch<'s>(
     )
 }
 
-fn error_wrong_num_args(source: &Source, expected: usize, actual: usize, span: Span) -> Error {
+fn error_wrong_num_args(source: &Source, span: Span, expected: usize, actual: usize) -> Error {
     Error::new(
         "Type Error",
         source,
@@ -662,6 +696,35 @@ fn error_return_outside_of_func(source: &Source, span: Span) -> Error {
     )
 }
 
+fn error_expected_tuple(source: &Source, span: Span, ty: Type) -> Error {
+    Error::new(
+        "Type Error",
+        source,
+        span,
+        "expected tuple",
+        &format!("Expected a tuple, but found {}", ty),
+    )
+}
+
+fn error_tuple_index_out_of_bounds(
+    source: &Source,
+    span: Span,
+    tuple_type: Vec<Type>,
+    index: u8,
+) -> Error {
+    Error::new(
+        "Type Error",
+        source,
+        span,
+        "invalid index",
+        &format!(
+            "Tuple index {} is out of bounds: the tuple has {} elements.",
+            index,
+            tuple_type.len()
+        ),
+    )
+}
+
 fn type_of_function(func: &FuncStmt) -> FuncType {
     FuncType {
         params: func.params.iter().map(|param| param.ty.clone()).collect(),
@@ -674,10 +737,21 @@ impl fmt::Display for Type {
         use Type::*;
 
         match self {
+            Never => write!(f, "Never"),
             Unit => write!(f, "()"),
             Bool => write!(f, "Bool"),
             Int => write!(f, "Int"),
-            Never => write!(f, "Never"),
+            Tuple(elems) => {
+                write!(f, "(")?;
+                let mut elems_iter = elems.iter();
+                if let Some(elem) = elems_iter.next() {
+                    write!(f, "{}", elem)?;
+                    for elem in elems_iter {
+                        write!(f, ", {}", elem)?;
+                    }
+                }
+                write!(f, ")")
+            }
         }
     }
 }

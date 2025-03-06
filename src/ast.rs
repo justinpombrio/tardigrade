@@ -61,6 +61,8 @@ pub struct FuncStmt {
 pub enum Expr {
     Var(VarRefn),
     Literal(Literal),
+    Tuple(Vec<(Expr, Span)>),
+    TupleAccess(Box<(Expr, Span)>, u8),
     Unop(Unop, Box<(Expr, Span)>),
     Binop(Binop, Box<(Expr, Span)>, Box<(Expr, Span)>),
     If(IfExpr),
@@ -227,33 +229,36 @@ pub enum Literal {
 pub struct Value(ValueCase);
 
 #[derive(Debug, Clone)]
-enum ValueCase {
-    Unit,
-    Bool(bool),
-    Int(i32),
+pub enum ValueCase {
+    Literal(Literal),
+    Tuple(Vec<Value>),
 }
 
 impl Value {
     pub fn unit() -> Value {
-        Value(ValueCase::Unit)
+        Value(ValueCase::Literal(Literal::Unit))
     }
 
     pub fn bool(b: bool) -> Value {
-        Value(ValueCase::Bool(b))
+        Value(ValueCase::Literal(Literal::Bool(b)))
     }
 
     pub fn int(int: i32) -> Value {
-        Value(ValueCase::Int(int))
+        Value(ValueCase::Literal(Literal::Int(int)))
+    }
+
+    pub fn tuple(elems: Vec<Value>) -> Value {
+        Value(ValueCase::Tuple(elems))
     }
 
     pub fn unwrap_unit(self) {
-        if !matches!(self.0, ValueCase::Unit) {
+        if !matches!(self.0, ValueCase::Literal(Literal::Unit)) {
             self.type_mismatch(&Type::Unit)
         }
     }
 
     pub fn unwrap_bool(self) -> bool {
-        if let ValueCase::Bool(b) = self.0 {
+        if let ValueCase::Literal(Literal::Bool(b)) = self.0 {
             b
         } else {
             self.type_mismatch(&Type::Bool)
@@ -261,11 +266,27 @@ impl Value {
     }
 
     pub fn unwrap_int(self) -> i32 {
-        if let ValueCase::Int(int) = self.0 {
+        if let ValueCase::Literal(Literal::Int(int)) = self.0 {
             int
         } else {
             self.type_mismatch(&Type::Int)
         }
+    }
+
+    pub fn unwrap_tuple_elem(self, index: u8) -> Value {
+        if let ValueCase::Tuple(mut tuple) = self.0 {
+            tuple.swap_remove(index as usize)
+        } else {
+            self.kind_mismatch("tuple")
+        }
+    }
+
+    fn kind_mismatch(self, expected: &str) -> ! {
+        panic!(
+            "Bug in type checker! Wrong type: expected {} but found {}",
+            expected,
+            self.0.type_of()
+        )
     }
 
     fn type_mismatch(self, expected: &Type) -> ! {
@@ -276,14 +297,45 @@ impl Value {
         )
     }
 
-    pub fn into_literal(self) -> Literal {
-        self.0.into_literal()
+    pub fn as_expr(&self, span: Span) -> Expr {
+        self.0.as_expr(span)
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
 impl ValueCase {
-    fn type_of(self) -> Type {
+    fn type_of(&self) -> Type {
         use ValueCase::*;
+
+        match self {
+            Literal(literal) => literal.type_of(),
+            Tuple(elems) => Type::Tuple(elems.iter().map(|elem| elem.0.type_of()).collect()),
+        }
+    }
+
+    fn as_expr(&self, span: Span) -> Expr {
+        use ValueCase::*;
+
+        match self {
+            Literal(literal) => Expr::Literal(literal.clone()),
+            Tuple(elems) => Expr::Tuple(
+                elems
+                    .iter()
+                    .map(|elem| (elem.as_expr(span), span))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl Literal {
+    pub fn type_of(&self) -> Type {
+        use Literal::*;
 
         match self {
             Unit => Type::Unit,
@@ -292,25 +344,28 @@ impl ValueCase {
         }
     }
 
-    fn into_literal(self) -> Literal {
-        use ValueCase::*;
-
-        match self {
-            Unit => Literal::Unit,
-            Bool(b) => Literal::Bool(b),
-            Int(n) => Literal::Int(n),
-        }
+    pub fn into_value(self) -> Value {
+        Value(ValueCase::Literal(self))
     }
 }
 
-impl fmt::Display for Value {
+impl fmt::Display for ValueCase {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use ValueCase::*;
 
-        match self.0 {
-            Unit => write!(f, "()"),
-            Bool(b) => write!(f, "{}", b),
-            Int(n) => write!(f, "{}", n),
+        match self {
+            Literal(literal) => write!(f, "{}", literal),
+            Tuple(elems) => {
+                write!(f, "(")?;
+                let mut elems_iter = elems.iter();
+                if let Some(elem) = elems_iter.next() {
+                    write!(f, "{}", elem)?;
+                    for elem in elems_iter {
+                        write!(f, ", {}", elem)?;
+                    }
+                }
+                write!(f, ")")
+            }
         }
     }
 }
