@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1.0.*"
-panfix = "0.6.0"
+#panfix = { path = "../panfix/" }
+panfix = "0.6.1"
 clap = { version = "4.5.*", features = ["derive"] }
 colored = "2.1"

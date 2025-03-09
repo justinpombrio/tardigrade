@@ -1,17 +1,17 @@
 TEST return
-    func triangularNum(n: Int) -> Int =
-        let sum = 0
-        func recur() -> Int =
-            if n == 0 then
+    func triangularNum(n: Int) -> Int {
+        let sum = 0;
+        func recur() -> Int {
+            if n == 0 {
                 return sum
-            else
-                set sum = sum + n
-                set n = n - 1
+            } else {
+                set sum = sum + n;
+                set n = n - 1;
                 recur()
-            end
-        end
+            }
+        }
         recur()
-    end
+    }
 
     triangularNum(5)
 EXPECT
@@ -19,9 +19,9 @@ EXPECT
 END
 
 TEST return_return
-    func f() -> Bool =
+    func f() -> Bool {
         return 0 > return true
-    end
+    }
     f()
 EXPECT
     true

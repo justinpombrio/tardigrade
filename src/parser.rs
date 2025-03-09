@@ -51,13 +51,21 @@ impl Parser {
         loop {
             match v.token() {
                 Token::Blank => break,
-                Token::Juxtapose => {
-                    stmts.push(self.parse_stmt_with_span(v.child(0), time)?);
-                    v = v.child(1);
-                }
-                Token::Stmt(_) | Token::Expr(_) => {
-                    stmts.push(self.parse_stmt_with_span(v, time)?);
+                Token::Expr(_) => {
+                    let expr = self.parse_expr_with_span(v, time)?;
+                    let span = expr.1;
+                    stmts.push((Stmt::Expr(expr), span));
                     break;
+                }
+                Token::Stmt(_) => {
+                    let stmt = self.parse_stmt_with_span(&mut v, time)?;
+                    stmts.push(stmt);
+                }
+                Token::Semicolon => {
+                    let expr = self.parse_expr_with_span(v.child(0), time)?;
+                    let span = expr.1;
+                    stmts.push((Stmt::Expr(expr), span));
+                    v = v.child(1);
                 }
                 _ => return Err(self.error_expected(v, "statement")),
             }
@@ -67,46 +75,30 @@ impl Parser {
 
     fn parse_stmt_with_span<'s>(
         &self,
-        v: Visitor<'s, '_>,
+        v: &mut Visitor<'s, '_>,
         time: Time,
     ) -> Result<(Stmt, Span), Error<'s>> {
-        match v.token() {
-            Token::Expr(token) => {
-                let expr = self.parse_expr(v, token, time)?;
-                let span = v.span();
-                Ok((Stmt::Expr((expr, span)), span))
-            }
-            Token::Stmt(token) => {
-                let stmt = self.parse_stmt(v, token, time)?;
-                Ok((stmt, v.span()))
-            }
-            _ => Err(self.error_expected(v, "expression")),
-        }
-    }
-
-    fn parse_stmt<'s>(
-        &self,
-        v: Visitor<'s, '_>,
-        token: StmtToken,
-        time: Time,
-    ) -> Result<Stmt, Error<'s>> {
-        match token {
-            StmtToken::Let => Ok(Stmt::Let(self.parse_let(v, time, Runtime)?)),
-            StmtToken::LetCT => Ok(Stmt::Let(self.parse_let(v, time, Comptime)?)),
-            StmtToken::Set => Ok(Stmt::Set(self.parse_set(v, time, Runtime)?)),
-            StmtToken::SetCT => Ok(Stmt::Set(self.parse_set(v, time, Comptime)?)),
-            StmtToken::Func => Ok(Stmt::Func(self.parse_func(v, time, Runtime)?)),
-            StmtToken::FuncCT => Ok(Stmt::Func(self.parse_func(v, time, Comptime)?)),
-        }
+        let stmt = match v.token() {
+            Token::Stmt(token) => match token {
+                StmtToken::Let => Stmt::Let(self.parse_let(v, time, Runtime)?),
+                StmtToken::LetCT => Stmt::Let(self.parse_let(v, time, Comptime)?),
+                StmtToken::Set => Stmt::Set(self.parse_set(v, time, Runtime)?),
+                StmtToken::SetCT => Stmt::Set(self.parse_set(v, time, Comptime)?),
+                StmtToken::Func => Stmt::Func(self.parse_func(v, time, Runtime)?),
+                StmtToken::FuncCT => Stmt::Func(self.parse_func(v, time, Comptime)?),
+            },
+            _ => return Err(self.error_expected(*v, "expression")),
+        };
+        Ok((stmt, v.span()))
     }
 
     fn parse_let<'s>(
         &self,
-        v: Visitor<'s, '_>,
+        v: &mut Visitor<'s, '_>,
         time: Time,
         let_time: Time,
     ) -> Result<LetStmt, Error<'s>> {
-        let time = self.combine_times(v, time, let_time)?;
+        let time = self.combine_times(*v, time, let_time)?;
         let (name, name_time) = self.parse_var(v.child(0))?;
         match name_time {
             Runtime => (),
@@ -116,6 +108,7 @@ impl Parser {
             )),
         }
         let definition = self.parse_expr_with_span(v.child(1), time)?;
+        *v = v.child(2);
         Ok(LetStmt {
             name,
             definition,
@@ -125,15 +118,16 @@ impl Parser {
 
     fn parse_set<'s>(
         &self,
-        v: Visitor<'s, '_>,
+        v: &mut Visitor<'s, '_>,
         time: Time,
         set_time: Time,
     ) -> Result<SetStmt, Error<'s>> {
-        let time = self.combine_times(v, time, set_time)?;
+        let time = self.combine_times(*v, time, set_time)?;
         let (var_name, var_time) = self.parse_ident(v.child(0), "variable name", time)?;
         let var_span = v.child(0).span();
         let var = VarRefn::new(var_name, var_time);
         let definition = self.parse_expr_with_span(v.child(1), time)?;
+        *v = v.child(2);
         Ok(SetStmt {
             var: (var, var_span),
             definition,
@@ -143,11 +137,11 @@ impl Parser {
 
     fn parse_func<'s>(
         &self,
-        v: Visitor<'s, '_>,
+        v: &mut Visitor<'s, '_>,
         time: Time,
         func_time: Time,
     ) -> Result<FuncStmt, Error<'s>> {
-        let time = self.combine_times(v, time, func_time)?;
+        let time = self.combine_times(*v, time, func_time)?;
         let (name, name_time) = self.parse_var(v.child(0))?;
         match name_time {
             Runtime => (),
@@ -161,6 +155,7 @@ impl Parser {
         let params = self.parse_params(v.child(1))?;
         let return_type = self.parse_return_type(v.child(2))?;
         let body = self.parse_block_with_span(v.child(3), time)?;
+        *v = v.child(4);
         Ok(FuncStmt {
             name: name.to_owned(),
             params,
@@ -365,7 +360,8 @@ impl Parser {
         block_time: Time,
     ) -> Result<BlockExpr, Error<'s>> {
         let time = self.combine_times(v, time, block_time)?;
-        let block = self.parse_block_with_span(v.child(0), time)?;
+        self.expect_blank(v.child(0))?;
+        let block = self.parse_block_with_span(v.child(1), time)?;
         Ok(BlockExpr {
             block: Box::new(block),
             time: block_time,
@@ -380,7 +376,9 @@ impl Parser {
     ) -> Result<IfExpr, Error<'s>> {
         let e_if = self.parse_expr_with_span(v.child(0), time + if_time)?;
         let e_then = self.parse_block_with_span(v.child(1), time)?;
-        let e_else = self.parse_block_with_span(v.child(2), time)?;
+        self.expect_blank(v.child(2))?;
+        self.expect_blank(v.child(3))?;
+        let e_else = self.parse_block_with_span(v.child(4), time)?;
         Ok(IfExpr {
             e_if: Box::new(e_if),
             e_then: Box::new(e_then),
@@ -436,18 +434,11 @@ impl Parser {
         Ok(elems)
     }
 
-    #[allow(unused)] // likely to be used in the future
     fn expect_blank<'s>(&self, v: Visitor<'s, '_>) -> Result<(), Error<'s>> {
-        let token = v.token();
-        if token == Token::Blank {
+        if v.token() == Token::Blank {
             Ok(())
         } else {
-            Err(v
-                .error(
-                    "unexpected",
-                    &format!("Expected nothing, but found {}", token),
-                )
-                .into())
+            Err(self.error_expected_nothing(v))
         }
     }
 
@@ -462,6 +453,14 @@ impl Parser {
             (Comptime, Runtime) | (Runtime, Comptime) => Ok(Comptime),
             (Comptime, Comptime) => Err(self.error_nested_comptime(v)),
         }
+    }
+
+    fn error_expected_nothing<'s>(&self, v: Visitor<'s, '_>) -> Error<'s> {
+        self.error(
+            v,
+            "unexpected",
+            &format!("Expected nothing, but found {}", v.token()),
+        )
     }
 
     fn error_unexpected_comptime_var<'s>(&self, v: Visitor<'s, '_>, msg: &str) -> Error<'s> {

@@ -1,28 +1,28 @@
 TEST let
-    let x = 1
-    let y = 2
+    let x = 1;
+    let y = 2;
     x + y
 EXPECT
     3
 END
 
-TEST nested let
-    let x = 1
-    let z = block
-        let y = x + 1
+TEST nested_let
+    let x = 1;
+    let z = block {
+        let y = x + 1;
         x + y
-    end
+    };
     z
 EXPECT
     3
 END
 
 TEST badly_nested_let_1
-    let x = 1
-    let z = block
-        let y = 2
+    let x = 1;
+    let z = block {
+        let y = 2;
         x + z
-    end
+    };
     z
 EXPECT
     Scope Error: Variable z not found in this scope.
@@ -33,11 +33,11 @@ EXPECT
 END
 
 TEST badly_nested_let_2
-    let x = 1
-    block
-        let y = 2
+    let x = 1;
+    block {
+        let y = 2;
         x + y
-    end
+    };
     y
 EXPECT
     Scope Error: Variable y not found in this scope.
@@ -48,8 +48,8 @@ EXPECT
 END
 
 TEST shadowing
-    let x = 1
-    let x = 2
+    let x = 1;
+    let x = 2;
     x + 1
 EXPECT
     3

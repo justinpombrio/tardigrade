@@ -29,13 +29,11 @@ fn construct_grammar_impl() -> Result<PanfixParser<Token>, GrammarError> {
     grammar.string(Type(TypeToken::Bool), "Bool")?;
     grammar.string(Type(TypeToken::Int), "Int")?;
 
-    grammar.op(Expr(Block), pattern!("block" "end"))?;
-    grammar.op(Expr(BlockCT), pattern!("#block" "end"))?;
-    grammar.op(Stmt(Func), pattern!("func" "(" ")" "=" "end"))?;
-    grammar.op(Stmt(FuncCT), pattern!("#func" "(" ")" "=" "end"))?;
+    grammar.op(Expr(Block), pattern!("block" "{" "}"))?;
+    grammar.op(Expr(BlockCT), pattern!("#block" "{" "}"))?;
     grammar.op(Expr(Comptime), pattern!("#(" ")"))?;
-    grammar.op(Expr(If), pattern!("if" "then" "else" "end"))?;
-    grammar.op(Expr(IfCT), pattern!("#if" "then" "else" "end"))?;
+    grammar.op(Expr(If), pattern!("if" "{" "}" "else" "{" "}"))?;
+    grammar.op(Expr(IfCT), pattern!("#if" "{" "}" "else" "{" "}"))?;
     grammar.op(Expr(Parens), pattern!("(" ")"))?;
 
     grammar.left_assoc();
@@ -75,17 +73,20 @@ fn construct_grammar_impl() -> Result<PanfixParser<Token>, GrammarError> {
     grammar.left_assoc();
     grammar.op(Arrow, pattern!("->" _))?;
 
-    grammar.left_assoc();
+    grammar.right_assoc();
     grammar.op(Colon, pattern!(_ ":" _))?;
 
     grammar.right_assoc();
     grammar.op(Comma, pattern!(_ "," _))?;
 
     grammar.right_assoc();
-    grammar.op(Stmt(Let), pattern!("let" "=" _))?;
-    grammar.op(Stmt(LetCT), pattern!("#let" "=" _))?;
-    grammar.op(Stmt(Set), pattern!("set" "=" _))?;
-    grammar.op(Stmt(SetCT), pattern!("#set" "=" _))?;
+    grammar.op(Semicolon, pattern!(_ ";" _))?;
+    grammar.op(Stmt(Let), pattern!("let" "=" ";" _))?;
+    grammar.op(Stmt(LetCT), pattern!("#let" "=" ";" _))?;
+    grammar.op(Stmt(Set), pattern!("set" "=" ";" _))?;
+    grammar.op(Stmt(SetCT), pattern!("#set" "=" ";" _))?;
+    grammar.op(Stmt(Func), pattern!("func" "(" ")" "{" "}" _))?;
+    grammar.op(Stmt(FuncCT), pattern!("#func" "(" ")" "{" "}" _))?;
 
     grammar.right_assoc();
     grammar.juxtapose()?;
@@ -105,6 +106,7 @@ pub enum Token {
     Blank,
     Juxtapose,
     Comma,
+    Semicolon,
     Colon,
     Arrow,
     Stmt(StmtToken),
@@ -163,6 +165,7 @@ impl fmt::Display for Token {
             Blank => write!(f, "nothing"),
             Juxtapose => write!(f, "multiple items"),
             Comma => write!(f, "','"),
+            Semicolon => write!(f, "';'"),
             Colon => write!(f, "':'"),
             Arrow => write!(f, "'->'"),
             Stmt(Let) => write!(f, "let statement"),

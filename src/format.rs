@@ -100,13 +100,13 @@ impl Format for FuncStmt {
         if matches!(self.return_type, Type::Unit) {
             write!(f, " -> {}", self.return_type)?;
         }
-        write!(f, " =")?;
+        write!(f, " {{")?;
 
         newline(f, indentation + 1)?;
         self.body.0.format(f, indentation + 1, Prec::MAX)?;
 
         newline(f, indentation)?;
-        write!(f, "end")
+        write!(f, "}}")
     }
 }
 
@@ -156,11 +156,11 @@ impl Format for Expr {
                 if block_expr.time == Time::Comptime {
                     write!(f, "#")?;
                 }
-                write!(f, "block")?;
+                write!(f, "block {{")?;
                 newline(f, indentation + 1)?;
                 block_expr.block.0.format(f, indentation + 1, prec)?;
                 newline(f, indentation)?;
-                write!(f, "end")
+                write!(f, "}}")
             }
             ComptimeExpr(expr) => {
                 write!(f, "#(")?;
@@ -182,19 +182,19 @@ impl Format for IfExpr {
         }
         write!(f, "if ")?;
         self.e_if.0.format(f, indentation + 1, Prec::MAX)?;
-        write!(f, " then")?;
+        write!(f, " {{")?;
 
         newline(f, indentation + 1)?;
         self.e_then.0.format(f, indentation + 1, Prec::MAX)?;
 
         newline(f, indentation)?;
-        write!(f, "else")?;
+        write!(f, "}} else {{")?;
 
         newline(f, indentation + 1)?;
         self.e_else.0.format(f, indentation + 1, Prec::MAX)?;
 
         newline(f, indentation)?;
-        write!(f, "end")
+        write!(f, "}}")
     }
 }
 

@@ -1,29 +1,29 @@
 TEST set
-    let x = 1
-    set x = 2
-    set x = 3
+    let x = 1;
+    set x = 2;
+    set x = 3;
     x
 EXPECT
     3
 END
 
 TEST set_not_bound
-    set x = 1
+    set x = 1;
 EXPECT
     Scope Error: Variable x not found in this scope.
      --> set_not_bound:1:5
       |
-    1 |set x = 1
+    1 |set x = 1;
       |    ^ unbound
 END
 
 TEST set_wrong_type
-    let x = true
-    set x = 1
+    let x = true;
+    set x = 1;
 EXPECT
     Type Error: Expected type Bool but found type Int.
      --> set_wrong_type:2:9
       |
-    2 |set x = 1
+    2 |set x = 1;
       |        ^ expected Bool
 END
