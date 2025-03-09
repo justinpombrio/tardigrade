@@ -1,29 +1,29 @@
-TEST
+TEST parse_error
     1
     +
 EXPECT
     Parse Error: Missing expression.
-     --> :2:2
+     --> parse_error:2:2
       |
     2 |+
       | ^ missing expression
 END
 
-TEST
+TEST type_error
     1 + false
 EXPECT
     Type Error: Expected type Int but found type Bool.
-     --> :1:5
+     --> type_error:1:5
       |
     1 |1 + false
       |    ^^^^^ expected Int
 END
 
-TEST
+TEST runtime_error
     1 / 0
 EXPECT
     Runtime Error: Division by zero.
-     --> :1:5
+     --> runtime_error:1:5
       |
     1 |1 / 0
       |    ^ was zero

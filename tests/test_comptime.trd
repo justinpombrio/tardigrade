@@ -1,20 +1,20 @@
 TEST ct_if
-    #if 0 < 1 then
+    #if 0 < 1 {
         1 + 2
-    else
+    } else {
         3 + 4
-    end
+    }
 EXPECT compile
-    block
+    block {
         1 + 2
-    end
+    }
 EXPECT run
     3
 END
 
 TEST ct_let
-    #let x = 1 + 2
-    let y = #x + #x
+    #let x = 1 + 2;
+    let y = #x + #x;
     y - 3
 EXPECT compile
     let y = 3 + 3
@@ -24,12 +24,12 @@ EXPECT run
 END
 
 TEST ct_func
-    #func comp(x: Int) -> Int =
+    #func comp(x: Int) -> Int {
         x + 1
-    end
-    func run(x: Int) -> Int =
+    }
+    func run(x: Int) -> Int {
         x + 2
-    end
+    }
     run(#comp(0))
 EXPECT compile
     run(1)
@@ -38,18 +38,18 @@ EXPECT run
 END
 
 TEST ct_block
-    block
-        let x = 1
-        #block
-            let x = 1 + 1
+    block {
+        let x = 1;
+        #block {
+            let x = 1 + 1;
             x
-        end + x
-    end
+        } + x
+    }
 EXPECT compile
-    block
+    block {
         let x = 1
         2 + x
-    end
+    }
 EXPECT run
     3
 END

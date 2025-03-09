@@ -28,7 +28,7 @@ EXPECT
     3
 END
 
-TEST arithm precedence
+TEST arithm_precedence
     1 * 2
       +
     33* 44
@@ -36,58 +36,58 @@ EXPECT
     1454
 END
 
-TEST if true
-    if true then 3 else 4 end
+TEST if_true
+    if true { 3 } else { 4 }
 EXPECT
     3
 END
 
-TEST if false
-    if false then 3 else 4 end
+TEST if_false
+    if false { 3 } else { 4 }
 EXPECT
     4
 END
 
 TEST conditions
-      if true  and true  then 1    else 0 end
-    + if true  and false then 10   else 0 end
-    + if false and true  then 100  else 0 end
-    + if false and false then 1000 else 0 end
-    + if true  or  true  then 2    else 0 end
-    + if true  or  false then 20   else 0 end
-    + if false or  true  then 200  else 0 end
-    + if false or  false then 2000 else 0 end
+      if true  and true  { 1    } else { 0 }
+    + if true  and false { 10   } else { 0 }
+    + if false and true  { 100  } else { 0 }
+    + if false and false { 1000 } else { 0 }
+    + if true  or  true  { 2    } else { 0 }
+    + if true  or  false { 20   } else { 0 }
+    + if false or  true  { 200  } else { 0 }
+    + if false or  false { 2000 } else { 0 }
 EXPECT
     223
 END
 
 TEST equality
-      if 1 == 1 then 1    else 0 end
-    + if 1 != 1 then 10   else 0 end
-    + if 1 == 2 then 100  else 0 end
-    + if 1 != 2 then 1000 else 0 end
+      if 1 == 1 { 1    } else { 0 }
+    + if 1 != 1 { 10   } else { 0 }
+    + if 1 == 2 { 100  } else { 0 }
+    + if 1 != 2 { 1000 } else { 0 }
 EXPECT
     1001
 END
 
 TEST comparisons
-      if 2 <  1 then 1    else 0 end
-    + if 2 <= 1 then 10   else 0 end
-    + if 2 >  1 then 100  else 0 end
-    + if 2 >= 1 then 1000 else 0 end
-    + if 2 <  2 then 2    else 0 end
-    + if 2 <= 2 then 20   else 0 end
-    + if 2 >  2 then 200  else 0 end
-    + if 2 >= 2 then 2000 else 0 end
-    + if 2 <  3 then 4    else 0 end
-    + if 2 <= 3 then 40   else 0 end
-    + if 2 >  3 then 400  else 0 end
-    + if 2 >= 3 then 4000 else 0 end
+      if 2 <  1 { 1    } else { 0 }
+    + if 2 <= 1 { 10   } else { 0 }
+    + if 2 >  1 { 100  } else { 0 }
+    + if 2 >= 1 { 1000 } else { 0 }
+    + if 2 <  2 { 2    } else { 0 }
+    + if 2 <= 2 { 20   } else { 0 }
+    + if 2 >  2 { 200  } else { 0 }
+    + if 2 >= 2 { 2000 } else { 0 }
+    + if 2 <  3 { 4    } else { 0 }
+    + if 2 <= 3 { 40   } else { 0 }
+    + if 2 >  3 { 400  } else { 0 }
+    + if 2 >= 3 { 4000 } else { 0 }
 EXPECT
     3164
 END
 
-TEST conj precedence
+TEST conj_precedence
     1 + 2 < 3 * 4 and false or true
 EXPECT
     true

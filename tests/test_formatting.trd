@@ -1,4 +1,4 @@
-TEST fmt arith
+TEST fmt_arith
     1 * 2
       +
     33* 44
@@ -6,13 +6,13 @@ EXPECT format
     1 * 2 + 33 * 44
 END
 
-TEST fmt if
-    if true and false then 1 + 2 else 3*4 end
+TEST fmt_if
+    if true and false { 1 + 2 } else { 3*4 }
 EXPECT format
-    if true and false then
+    if true and false {
         1 + 2
-    else
+    } else {
         3 * 4
-    end
+    }
 END
 
