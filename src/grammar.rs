@@ -1,8 +1,8 @@
 use crate::ast::{Binop, Unop};
-use panfix::{pattern, Grammar, GrammarError, Parser as PanfixParser};
+use panfix::{pattern, Grammar, GrammarError, Parser as PanfixParser, Token as PanfixToken};
 use std::fmt;
 
-pub fn construct_grammar() -> PanfixParser {
+pub fn construct_grammar() -> PanfixParser<Token> {
     // The grammar is specified in source code, so any error in it is a bug.
     match construct_grammar_impl() {
         Ok(parser) => parser,
@@ -10,75 +10,82 @@ pub fn construct_grammar() -> PanfixParser {
     }
 }
 
-fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
-    let mut grammar = Grammar::new("([ \n\r\t]+|//.*)+")?;
+fn construct_grammar_impl() -> Result<PanfixParser<Token>, GrammarError> {
+    use Binop::*;
+    use ExprToken::*;
+    use LiteralToken::*;
+    use StmtToken::*;
+    use Token::*;
+    use Unop::*;
 
-    grammar.regex("Int", r#"-?0|[1-9][0-9]*"#)?;
-    grammar.regex("Var", r#"[_a-z][_0-9a-zA-Z]*"#)?;
-    grammar.regex("VarCT", r#"#[_a-z][_0-9a-zA-Z]*"#)?;
-    grammar.string("True", "true")?;
-    grammar.string("False", "false")?;
+    let mut grammar = Grammar::<Token>::new("([ \n\r\t]+|//.*)+")?;
 
-    grammar.string("TypeBool", "Bool")?;
-    grammar.string("TypeInt", "Int")?;
+    grammar.regex(Expr(Literal(Int)), r#"-?0|[1-9][0-9]*"#)?;
+    grammar.regex(Expr(Var), r#"[_a-z][_0-9a-zA-Z]*"#)?;
+    grammar.regex(Expr(VarCT), r#"#[_a-z][_0-9a-zA-Z]*"#)?;
+    grammar.string(Expr(Literal(True)), "true")?;
+    grammar.string(Expr(Literal(False)), "false")?;
 
-    grammar.op("Block", pattern!("block" "end"))?;
-    grammar.op("BlockCT", pattern!("#block" "end"))?;
-    grammar.op("Func", pattern!("func" "(" ")" "=" "end"))?;
-    grammar.op("FuncCT", pattern!("#func" "(" ")" "=" "end"))?;
-    grammar.op("Comptime", pattern!("#(" ")"))?;
-    grammar.op("If", pattern!("if" "then" "else" "end"))?;
-    grammar.op("IfCT", pattern!("#if" "then" "else" "end"))?;
-    grammar.op("Parens", pattern!("(" ")"))?;
+    grammar.string(Type(TypeToken::Bool), "Bool")?;
+    grammar.string(Type(TypeToken::Int), "Int")?;
 
-    grammar.left_assoc();
-    grammar.op("Dot", pattern!(_ "." _))?;
-
-    grammar.left_assoc();
-    grammar.op("Apply", pattern!(_ "(" ")"))?;
-
-    grammar.left_assoc();
-    grammar.op("Mul", pattern!(_ "*" _))?;
-    grammar.op("Div", pattern!(_ "/" _))?;
+    grammar.op(Expr(Block), pattern!("block" "end"))?;
+    grammar.op(Expr(BlockCT), pattern!("#block" "end"))?;
+    grammar.op(Stmt(Func), pattern!("func" "(" ")" "=" "end"))?;
+    grammar.op(Stmt(FuncCT), pattern!("#func" "(" ")" "=" "end"))?;
+    grammar.op(Expr(Comptime), pattern!("#(" ")"))?;
+    grammar.op(Expr(If), pattern!("if" "then" "else" "end"))?;
+    grammar.op(Expr(IfCT), pattern!("#if" "then" "else" "end"))?;
+    grammar.op(Expr(Parens), pattern!("(" ")"))?;
 
     grammar.left_assoc();
-    grammar.op("Add", pattern!(_ "+" _))?;
-    grammar.op("Sub", pattern!(_ "-" _))?;
+    grammar.op(Expr(Dot), pattern!(_ "." _))?;
+
+    grammar.left_assoc();
+    grammar.op(Expr(Apply), pattern!(_ "(" ")"))?;
+
+    grammar.left_assoc();
+    grammar.op(Expr(EBinop(Mul)), pattern!(_ "*" _))?;
+    grammar.op(Expr(EBinop(Div)), pattern!(_ "/" _))?;
+
+    grammar.left_assoc();
+    grammar.op(Expr(EBinop(Add)), pattern!(_ "+" _))?;
+    grammar.op(Expr(EBinop(Sub)), pattern!(_ "-" _))?;
 
     grammar.right_assoc();
-    grammar.op("Eq", pattern!(_ "==" _))?;
-    grammar.op("Ne", pattern!(_ "!=" _))?;
-    grammar.op("Lt", pattern!(_ "<" _))?;
-    grammar.op("Le", pattern!(_ "<=" _))?;
-    grammar.op("Gt", pattern!(_ ">" _))?;
-    grammar.op("Ge", pattern!(_ ">=" _))?;
+    grammar.op(Expr(EBinop(Eq)), pattern!(_ "==" _))?;
+    grammar.op(Expr(EBinop(Ne)), pattern!(_ "!=" _))?;
+    grammar.op(Expr(EBinop(Lt)), pattern!(_ "<" _))?;
+    grammar.op(Expr(EBinop(Le)), pattern!(_ "<=" _))?;
+    grammar.op(Expr(EBinop(Gt)), pattern!(_ ">" _))?;
+    grammar.op(Expr(EBinop(Ge)), pattern!(_ ">=" _))?;
 
     grammar.left_assoc();
-    grammar.op("Not", pattern!("not" _))?;
+    grammar.op(Expr(EUnop(Not)), pattern!("not" _))?;
 
     grammar.left_assoc();
-    grammar.op("And", pattern!(_ "and" _))?;
+    grammar.op(Expr(EBinop(And)), pattern!(_ "and" _))?;
 
     grammar.left_assoc();
-    grammar.op("Or", pattern!(_ "or" _))?;
+    grammar.op(Expr(EBinop(Or)), pattern!(_ "or" _))?;
 
     grammar.left_assoc();
-    grammar.op("Return", pattern!("return" _))?;
+    grammar.op(Expr(Return), pattern!("return" _))?;
 
     grammar.left_assoc();
-    grammar.op("Arrow", pattern!("->" _))?;
+    grammar.op(Arrow, pattern!("->" _))?;
 
     grammar.left_assoc();
-    grammar.op("Colon", pattern!(_ ":" _))?;
+    grammar.op(Colon, pattern!(_ ":" _))?;
 
     grammar.right_assoc();
-    grammar.op("Comma", pattern!(_ "," _))?;
+    grammar.op(Comma, pattern!(_ "," _))?;
 
     grammar.right_assoc();
-    grammar.op("Let", pattern!("let" "=" _))?;
-    grammar.op("LetCT", pattern!("#let" "=" _))?;
-    grammar.op("Set", pattern!("set" "=" _))?;
-    grammar.op("SetCT", pattern!("#set" "=" _))?;
+    grammar.op(Stmt(Let), pattern!("let" "=" _))?;
+    grammar.op(Stmt(LetCT), pattern!("#let" "=" _))?;
+    grammar.op(Stmt(Set), pattern!("set" "=" _))?;
+    grammar.op(Stmt(SetCT), pattern!("#set" "=" _))?;
 
     grammar.right_assoc();
     grammar.juxtapose()?;
@@ -86,8 +93,15 @@ fn construct_grammar_impl() -> Result<PanfixParser, GrammarError> {
     grammar.finish()
 }
 
+impl PanfixToken for Token {
+    const LEX_ERROR: Token = Token::LexError;
+    const BLANK: Token = Token::Blank;
+    const JUXTAPOSE: Token = Token::Juxtapose;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token {
+    LexError,
     Blank,
     Juxtapose,
     Comma,
@@ -139,74 +153,13 @@ pub enum LiteralToken {
     Int,
 }
 
-impl Token {
-    // Really, the Panfix parser should be parameterized over this Token type rather than working
-    // with strings. But since they're strings we'll convert them.
-    pub fn from_str(op_name: &str) -> Token {
-        use Token::*;
-
-        match op_name {
-            "Blank" => Blank,
-            "Juxtapose" => Juxtapose,
-            "Comma" => Comma,
-            "Colon" => Colon,
-            "Arrow" => Arrow,
-            "Let" => Stmt(StmtToken::Let),
-            "LetCT" => Stmt(StmtToken::LetCT),
-            "Set" => Stmt(StmtToken::Set),
-            "SetCT" => Stmt(StmtToken::SetCT),
-            "Func" => Stmt(StmtToken::Func),
-            "FuncCT" => Stmt(StmtToken::FuncCT),
-            "TypeBool" => Type(TypeToken::Bool),
-            "TypeInt" => Type(TypeToken::Int),
-            op_name => Expr(ExprToken::from_str(op_name)),
-        }
-    }
-}
-
-impl ExprToken {
-    fn from_str(op_name: &str) -> ExprToken {
-        use ExprToken::*;
-
-        match op_name {
-            "True" => Literal(LiteralToken::True),
-            "False" => Literal(LiteralToken::False),
-            "Int" => Literal(LiteralToken::Int),
-            "Var" => Var,
-            "VarCT" => VarCT,
-            "Dot" => Dot,
-            "Apply" => Apply,
-            "Parens" => Parens,
-            "If" => If,
-            "IfCT" => IfCT,
-            "Not" => EUnop(Unop::Not),
-            "Add" => EBinop(Binop::Add),
-            "Sub" => EBinop(Binop::Sub),
-            "Mul" => EBinop(Binop::Mul),
-            "Div" => EBinop(Binop::Div),
-            "Eq" => EBinop(Binop::Eq),
-            "Ne" => EBinop(Binop::Ne),
-            "Lt" => EBinop(Binop::Lt),
-            "Le" => EBinop(Binop::Le),
-            "Gt" => EBinop(Binop::Gt),
-            "Ge" => EBinop(Binop::Ge),
-            "And" => EBinop(Binop::And),
-            "Or" => EBinop(Binop::Or),
-            "Block" => Block,
-            "BlockCT" => BlockCT,
-            "Comptime" => Comptime,
-            "Return" => Return,
-            other => panic!("Bug in parser: missing token {}", other),
-        }
-    }
-}
-
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use StmtToken::*;
         use Token::*;
 
         match self {
+            LexError => write!(f, "LEX_ERROR"), // should never happen
             Blank => write!(f, "nothing"),
             Juxtapose => write!(f, "multiple items"),
             Comma => write!(f, "','"),
