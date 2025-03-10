@@ -215,7 +215,6 @@ impl Unop {
 
 #[derive(Debug, Clone)]
 pub enum Literal {
-    Unit,
     Bool(bool),
     Int(i32),
 }
@@ -235,10 +234,6 @@ pub enum ValueCase {
 }
 
 impl Value {
-    pub fn unit() -> Value {
-        Value(ValueCase::Literal(Literal::Unit))
-    }
-
     pub fn bool(b: bool) -> Value {
         Value(ValueCase::Literal(Literal::Bool(b)))
     }
@@ -249,12 +244,6 @@ impl Value {
 
     pub fn tuple(elems: Vec<Value>) -> Value {
         Value(ValueCase::Tuple(elems))
-    }
-
-    pub fn unwrap_unit(self) {
-        if !matches!(self.0, ValueCase::Literal(Literal::Unit)) {
-            self.type_mismatch(&Type::Unit)
-        }
     }
 
     pub fn unwrap_bool(self) -> bool {
@@ -338,7 +327,6 @@ impl Literal {
         use Literal::*;
 
         match self {
-            Unit => Type::Unit,
             Bool(_) => Type::Bool,
             Int(_) => Type::Int,
         }
@@ -364,6 +352,9 @@ impl fmt::Display for ValueCase {
                         write!(f, ", {}", elem)?;
                     }
                 }
+                if elems.len() == 1 {
+                    write!(f, ",")?;
+                }
                 write!(f, ")")
             }
         }
@@ -375,7 +366,6 @@ impl fmt::Display for Literal {
         use Literal::*;
 
         match self {
-            Unit => write!(f, "()"),
             Bool(b) => write!(f, "{}", b),
             Int(n) => write!(f, "{}", n),
         }

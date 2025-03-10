@@ -121,6 +121,9 @@ impl Format for Expr {
             Tuple(elems) => {
                 write!(f, "(")?;
                 sep(f, elems.iter().map(|elem| &elem.0), ", ", indentation, prec)?;
+                if elems.len() == 1 {
+                    write!(f, ",")?;
+                }
                 write!(f, ")")
             }
             TupleAccess(expr, index) => {

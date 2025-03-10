@@ -364,7 +364,7 @@ impl<'s, 'l> Interpreter<'s, 'l> {
         use ast::Stmt::*;
 
         let start_of_block = self.stack.start_block();
-        let mut result = Value::unit();
+        let mut result = Value::tuple(Vec::new());
         for stmt in &block.0 .0 {
             match &stmt.0 {
                 Expr(e) => {

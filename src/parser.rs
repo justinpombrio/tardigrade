@@ -293,7 +293,7 @@ impl Parser {
             ExprToken::Parens => {
                 let inner_token = v.child(0).token();
                 if inner_token == Token::Blank {
-                    Ok(Expr::Literal(Literal::Unit))
+                    Ok(Expr::Tuple(Vec::new()))
                 } else if inner_token == Token::Comma {
                     let elems =
                         self.parse_comma_sep(v.child(0), |v| self.parse_expr_with_span(v, time))?;
