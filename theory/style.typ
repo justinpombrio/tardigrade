@@ -14,7 +14,7 @@
     columns: (auto, auto, auto, auto),
     align: (left, right, right, left),
     column-gutter: 5pt,
-    row-gutter: 10pt,
+    row-gutter: 8pt,
     ..cells)
 }
 
@@ -23,7 +23,6 @@
 }
 
 #let rule(..premises, conclusion) = {
-  block(
   grid(
     columns: (auto),
     rows: (auto, auto),
@@ -31,5 +30,5 @@
     premises.pos().join[\ ],
     grid.hline(),
     [], // not sure what this is about
-    conclusion))
+    conclusion)
 }
