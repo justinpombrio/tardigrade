@@ -3,18 +3,13 @@
 #set page(margin: (left: 1.5cm, right: 1.5cm))
 
 #let eq = [#h(2pt) `=` #h(2pt)]
-#let syn-let(x, b, e)   = { $#`let` #x #eq #b #`in` #e$ }
-#let syn-clos(f, x, e)  = { $#`fn` #f (x) #eq #e$ }
-#let syn-in(fs, e)      = { $#fs #`in` #e$ }
-#let syn-if(c, t, e)    = { $#`if` #c #`then` #t #`else` #e$ }
+#let syn-let(x, b, e)   = $#`let` #x #eq #b #`in` #e$
+#let syn-if(c, t, e)    = $#`if` #c #`then` #t #`else` #e$
 
 #let empty = $circle.filled.tiny$
-#let void = `void`
 #let nand = `nand`
 #let drop = `drop`
-#let take = `take`
 #let nil  = `nil`
-#let Void = `Void`
 #let Bit = `Bit`
 #let Nil = `Nil`
 #let fn = `fn`
@@ -22,8 +17,6 @@
 
 #let shared = $\&$
 #let mutable = $*#h(0pt)$
-#let owned = $~#h(0pt)$
-#let lenof(x) = $#`len` #x$
 
 #let eval = $arrow.r$
 #let evalPatt = $arrow.r_"bind"$
@@ -33,8 +26,8 @@
 #let tcPatt = $arrow.r.double_"bind"$
 #let tcArg = $arrow.r.double_"arg"$
 #let tcArgs = $arrow.r.double_"args"$
+#let tcFree = $arrow.r.double_"free"$
 
-#let space = h(0.5em)
 #let quad = h(1.5em)
 
 == Linearity
@@ -42,7 +35,6 @@
 #columns[
   === TODO
 
-  - `take` is no longer needed.
   - `let` should check that memory has been cleaned up?
 
   === Motivation
@@ -67,10 +59,10 @@
     ("pattern",    $p$, $x | (p, p)$),
     ("index",      $i$, $0 | 1$),
     ("path",       $pi$, $x overline(.i)$),
-    ("argument",   $a$, $e | mu pi | lambda(overline(x)).e$),
+    ("argument",   $a$, $e | mu pi | lambda(overline(x\:s)).e$),
     ("expression", $e$, $nil | 0 | 1 | (e, e)$),
     (none, none,        $e nand e | #syn-if($e$, $e$, $e$)$),
-    (none, none,        $drop e | take x | pi := e | e; e$),
+    (none, none,        $drop e | pi := e | e; e$),
     (none, none,        $#syn-let($p$, $e$, $e$) | fn(overline(x\:s)).e | e(overline(a))$),
   )
   
@@ -119,13 +111,6 @@
     $E tack M\/e eval M'\/v$,
     $E tack M\/drop e eval M'\/nil$
   )
-
-  /*
-  #rule(
-    $E[x] = m$,
-    $E tack M[m := v]\/take x eval M\/v$
-  )
-  */
 
   #rule(
     $E tack M\/e eval M'\/v$,
@@ -203,8 +188,8 @@
     ("arg type",      $s$, $t | mu t | lambda(overline(s)).t$),
     ("memory addr",   $m$,  $bb(N)$),
     ("type memory",   $Delta$,  [map from $m$ to $t$]),
-    ("type location", $l_t$,  $x overline(.i)$),
-    ("type binding",  $b_t$,  $m | mu l_t | lambda(overline(s)). t$),
+    ("location",      $l$,  $m overline(.i)$),
+    ("type binding",  $b_t$,  $m | mu l | lambda(overline(s)). t$),
     ("type env",      $Gamma$, $empty | Gamma, x:b_t$),
   )
 
@@ -267,15 +252,17 @@
   )
 
   #rule(
-    $Gamma[f] = lambda(overline(s)).t
-      quad Gamma tack Delta\/overline(a) tcArgs Delta'\/overline(s)$,
-    $Gamma tack Delta\/f(overline(a)) tc Delta'\/t$
+    $Gamma[f] = lambda(overline(s)).t$,
+    $Gamma\/Delta\/overline(a) tcArgs Gamma'\/Delta'\/overline(s)
+      quad Gamma' tack Delta' tcFree Delta''$,
+    $Gamma tack Delta\/f(overline(a)) tc Delta''\/t$
   )
 
   #rule(
-    $Gamma tack Delta\/e tc Delta'\/fn(overline(s)).t
-      quad Gamma tack Delta'\/overline(a) tcArgs Delta''\/overline(s)$,
-    $Gamma tack Delta\/e(overline(a)) tc Delta''\/t$
+    $Gamma tack Delta_0\/e tc Delta_1\/fn(overline(s)).t$,
+    $Gamma\/Delta_1\/overline(a) tcArgs Gamma'\/Delta_2\/overline(s)
+      quad Gamma' tack Delta_2 tcFree Delta_3$,
+    $Gamma tack Delta_0\/e(overline(a)) tc Delta_3\/t$
   )
 
   #judgement($Gamma\/Delta\/p\/t tcPatt Gamma\/Delta$)
@@ -289,18 +276,29 @@
     $Gamma\/Delta\/(p_1, p_2)\/(t_1, t_2) tcPatt Gamma''\/Delta''$
   )
 
-  #judgement($Gamma tack Delta\/overline(a) tcArgs Delta'\/overline(s)$)
-  #rule($Gamma tack Delta\/empty tcArgs Delta\/empty$)
+  #judgement($Gamma\/Delta\/overline(a) tcArgs Gamma\/Delta\/overline(s)$)
+  #rule($Gamma\/Delta\/empty tcArgs empty\/Delta\/empty$)
   #rule(
-    $Gamma tack Delta\/a_0 tcArg Delta'\/s_0$,
-    $Gamma tack Delta'\/overline(a) tcArgs Delta''\/overline(s)$,
-    $Gamma tack Delta\/a_0, overline(a) tcArgs Delta''\/s_0, overline(s)$
+    $Gamma\/Delta\/overline(a) tcArgs Gamma'\/Delta'\/overline(s)$,
+    $Gamma\/Delta'\/a' tcArg Gamma''\/Delta''\/s'
+      quad tack Gamma', Gamma''$,
+    $Gamma\/Delta\/overline(a), a' tcArgs Gamma',Gamma''\/Delta''\/overline(s), s'$
   )
+
+  Notice that we reuse $Gamma$ on the LHS here! This is important if the first
+  parameter name is `x`, and the second arg refers to `x`.
 
   #judgement($Gamma\/Delta\/a tcArg Gamma\/Delta\/s$)
   #rule(
-    $Gamma tack Delta\/e tc Delta'\/t$,
-    $fresh m$,
-    $Gamma\/Delta\/e tcArg Delta'\/s$
+    $Gamma tack Delta\/e tc Delta'\/t quad fresh m$,
+    $Gamma\/Delta\/e tcArg x:m\/Delta',m:t\/t$
+  )
+  #rule(
+    $Gamma[mu pi] = mu l quad Delta[mu l] = mu t$,
+    $Gamma\/Delta\/mu pi tcArg x:mu l\/Delta\/mu t$
+  )
+  #rule(
+    $$,
+    $Gamma\/Delta\/lambda(overline(x\:s)).e tcArg$
   )
 ]

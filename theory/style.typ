@@ -15,7 +15,8 @@
     align: (left, right, right, left),
     column-gutter: 5pt,
     row-gutter: 8pt,
-    ..cells)
+    ..cells
+  )
 }
 
 #let judgement(content) = {
@@ -23,12 +24,30 @@
 }
 
 #let rule(..premises, conclusion) = {
+  block(
+    breakable: false,
+    grid(
+      columns: (auto),
+      rows: (auto, auto),
+      row-gutter: (6pt, 4pt),
+      premises.pos().join[\ ],
+      grid.hline(),
+      [], // not sure what this is about
+      conclusion
+    )
+  )
+}
+
+#let describe(thing, description) = {
+  thing
+  v(-0.66em)
+  text(style: "italic", description)
+}
+
+#let side-by-side(x, y) = {
   grid(
-    columns: (auto),
-    rows: (auto, auto),
-    row-gutter: (6pt, 4pt),
-    premises.pos().join[\ ],
-    grid.hline(),
-    [], // not sure what this is about
-    conclusion)
+    columns: 2,
+    align: bottom,
+    gutter: 2em,
+    x, y)
 }
