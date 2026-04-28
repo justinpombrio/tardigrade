@@ -1,0 +1,8 @@
+[package]
+name = "tardigrade"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = "1.0.*"
+panfix = "0.6.1"
