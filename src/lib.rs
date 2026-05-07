@@ -4,3 +4,4 @@ mod render;
 
 pub use error::Error;
 pub use logger::{Logger, RenderOptions, Verbosity};
+pub use render::Render;

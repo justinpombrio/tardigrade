@@ -1,0 +1,11 @@
+TEST good test
+  John
+EXPECT hello
+  Hello, John
+END
+
+TEST bad test
+  John
+EXPECT hello
+  nnno
+END

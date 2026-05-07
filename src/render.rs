@@ -180,3 +180,9 @@ impl Render for str {
         }
     }
 }
+
+impl Render for String {
+    fn render(&self, r: &mut Renderer) {
+        Render::render(self as &str, r)
+    }
+}
